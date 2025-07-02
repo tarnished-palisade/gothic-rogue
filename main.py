@@ -13,7 +13,6 @@ import math
 
 # ==============================================================================
 # I. Settings Manager (Principle: Preservation Axiom)
-# Handles loading and saving player preferences.
 # ==============================================================================
 class SettingsManager:
     """Manages loading and saving game settings to a JSON file."""
@@ -46,24 +45,18 @@ class SettingsManager:
 # ==============================================================================
 # II. Configuration and Constants (Principle: Change-Resilient)
 # ==============================================================================
-
-# Initialize settings manager
 settings_manager = SettingsManager()
 
-# Screen dimensions - these are now loaded from settings
 resolutions = [(800, 600), (1024, 768), (1200, 900), (1600, 1200), (1920, 1080)]
 current_resolution_index = settings_manager.get("resolution_index")
 SCREEN_WIDTH, SCREEN_HEIGHT = resolutions[current_resolution_index]
 
-# Internal surface for consistent rendering and easy scaling
 INTERNAL_WIDTH, INTERNAL_HEIGHT = 800, 600
 
-# Colors
 COLOR_NEAR_BLACK = (10, 10, 10)
 COLOR_WHITE = (255, 255, 255)
 COLOR_BLOOD_RED = (139, 0, 0)
 
-# Fonts
 FONT_NAME = 'Consolas'
 
 
@@ -128,11 +121,9 @@ class Menu:
         return None
 
     def update(self, delta_time):
-        """Handles time-based updates for animations."""
         self.title_flicker_timer += delta_time
 
     def draw(self, surface):
-        # Calculate flickering brightness for the title
         flicker = 190 + 65 * math.sin(self.title_flicker_timer * 5)
         title_color = (int(flicker), int(flicker), int(flicker))
 
@@ -164,7 +155,7 @@ class OptionsMenu:
         self.buttons[self.selected_index].is_selected = True
 
     def update(self, delta_time):
-        pass  # No animations in this menu yet
+        pass
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
@@ -190,7 +181,44 @@ class OptionsMenu:
 
 
 # ==============================================================================
-# V. Main Game Class
+# V. Entity-Component System (ECS) (Principle: Modularity)
+# ==============================================================================
+class Component:
+    """A base class for all components."""
+    pass
+
+
+class PositionComponent(Component):
+    """Stores the x, y coordinates of an entity on the map."""
+
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
+class RenderComponent(Component):
+    """Stores the visual representation of an entity."""
+
+    def __init__(self, char, color):
+        self.char = char
+        self.color = color
+
+
+class Entity:
+    """A generic container for components."""
+
+    def __init__(self):
+        self.components = {}
+
+    def add_component(self, component):
+        self.components[type(component)] = component
+
+    def get_component(self, component_type):
+        return self.components.get(component_type)
+
+
+# ==============================================================================
+# VI. Main Game Class
 # ==============================================================================
 class Game:
     def __init__(self):
@@ -206,6 +234,12 @@ class Game:
             GameState.MAIN_MENU: Menu(),
             GameState.OPTIONS_MENU: OptionsMenu()
         }
+        self.game_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 16)
+
+        # Player Creation
+        self.player = Entity()
+        self.player.add_component(PositionComponent(int(INTERNAL_WIDTH / 2), int(INTERNAL_HEIGHT / 2)))
+        self.player.add_component(RenderComponent('@', COLOR_WHITE))
 
     def run(self):
         while self.game_state != GameState.QUIT:
@@ -253,57 +287,20 @@ class Game:
 
         if self.game_state in self.menus:
             self.menus[self.game_state].draw(self.internal_surface)
+        elif self.game_state == GameState.GAME_RUNNING:
+            # Render the player
+            pos = self.player.get_component(PositionComponent)
+            render = self.player.get_component(RenderComponent)
+            if pos and render:
+                text_surface = self.game_font.render(render.char, True, render.color)
+                text_rect = text_surface.get_rect(center=(pos.x, pos.y))
+                self.internal_surface.blit(text_surface, text_rect)
 
         scaled_surface = pygame.transform.scale(self.internal_surface, (SCREEN_WIDTH, SCREEN_HEIGHT))
         self.screen.blit(scaled_surface, (0, 0))
 
         pygame.display.flip()
 
-
-# ==============================================================================
-# VI. Entity-Component System (ECS) (Principle: Modularity)
-# The foundational architecture for all game objects.
-# ==============================================================================
-
-class Component:
-    """A base class for all components. Does not do anything on its own."""
-    pass
-
-
-class Entity:
-    """
-    A generic container for components. Represents any object in the game,
-    such as the player, an enemy, or an item.
-    - Necessity: To have a flexible, universal way to represent all game objects.
-    - Function: Holds a dictionary of components that define its properties and behavior.
-    - Effect: A highly modular and scalable way to build complex game objects from simple data pieces.
-    """
-
-    def __init__(self):
-        self.components = {}
-
-    def add_component(self, component):
-        # The key is the class type of the component, for easy lookup.
-        self.components[type(component)] = component
-
-    def get_component(self, component_type):
-        return self.components.get(component_type)
-
-class PositionComponent(Component):
-    """Stores the x, y coordinates of an entity on the map."""
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-
-class RenderComponent(Component):
-    """
-    Stores the visual representation of an entity.
-    - char: The ASCII character (e.g., '@')
-    - color: The RGB tuple for the character's color
-    """
-    def __init__(self, char, color):
-        self.char = char
-        self.color = color
 
 # ==============================================================================
 # VII. Entry Point
