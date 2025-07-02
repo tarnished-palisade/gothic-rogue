@@ -261,7 +261,52 @@ class Game:
 
 
 # ==============================================================================
-# VI. Entry Point
+# VI. Entity-Component System (ECS) (Principle: Modularity)
+# The foundational architecture for all game objects.
+# ==============================================================================
+
+class Component:
+    """A base class for all components. Does not do anything on its own."""
+    pass
+
+
+class Entity:
+    """
+    A generic container for components. Represents any object in the game,
+    such as the player, an enemy, or an item.
+    - Necessity: To have a flexible, universal way to represent all game objects.
+    - Function: Holds a dictionary of components that define its properties and behavior.
+    - Effect: A highly modular and scalable way to build complex game objects from simple data pieces.
+    """
+
+    def __init__(self):
+        self.components = {}
+
+    def add_component(self, component):
+        # The key is the class type of the component, for easy lookup.
+        self.components[type(component)] = component
+
+    def get_component(self, component_type):
+        return self.components.get(component_type)
+
+class PositionComponent(Component):
+    """Stores the x, y coordinates of an entity on the map."""
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+class RenderComponent(Component):
+    """
+    Stores the visual representation of an entity.
+    - char: The ASCII character (e.g., '@')
+    - color: The RGB tuple for the character's color
+    """
+    def __init__(self, char, color):
+        self.char = char
+        self.color = color
+
+# ==============================================================================
+# VII. Entry Point
 # ==============================================================================
 if __name__ == "__main__":
     game = Game()
