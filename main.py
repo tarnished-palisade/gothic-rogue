@@ -6,27 +6,60 @@
 import pygame
 import sys
 from enum import Enum, auto
+import json
+import os
+import math
+
 
 # ==============================================================================
-# I. Configuration and Constants (Principle: Change-Resilient)
-# Centralized constants for easy modification of the game's appearance.
+# I. Settings Manager (Principle: Preservation Axiom)
+# Handles loading and saving player preferences.
+# ==============================================================================
+class SettingsManager:
+    """Manages loading and saving game settings to a JSON file."""
+
+    def __init__(self):
+        self.filepath = "gothic_rogue_settings.json"
+        self.settings = self.load_settings()
+
+    def load_settings(self):
+        """Loads settings from the JSON file, or returns defaults."""
+        if os.path.exists(self.filepath):
+            with open(self.filepath, 'r') as f:
+                return json.load(f)
+        return {
+            "resolution_index": 0
+        }
+
+    def save_settings(self):
+        """Saves the current settings to the JSON file."""
+        with open(self.filepath, 'w') as f:
+            json.dump(self.settings, f, indent=2)
+
+    def get(self, key):
+        return self.settings.get(key)
+
+    def set(self, key, value):
+        self.settings[key] = value
+
+
+# ==============================================================================
+# II. Configuration and Constants (Principle: Change-Resilient)
 # ==============================================================================
 
-# Screen Dimensions
-# These are dynamic resolutions to accommodate larger screen sizes
+# Initialize settings manager
+settings_manager = SettingsManager()
+
+# Screen dimensions - these are now loaded from settings
 resolutions = [(800, 600), (1024, 768), (1200, 900), (1600, 1200), (1920, 1080)]
-current_resolution_index = 0
+current_resolution_index = settings_manager.get("resolution_index")
 SCREEN_WIDTH, SCREEN_HEIGHT = resolutions[current_resolution_index]
 
-# Internal Surface
-# For consistent rendering and easy scaling
+# Internal surface for consistent rendering and easy scaling
 INTERNAL_WIDTH, INTERNAL_HEIGHT = 800, 600
 
 # Colors
-COLOR_BLACK = (0, 0, 0)
 COLOR_NEAR_BLACK = (10, 10, 10)
-COLOR_SLATE_GREY = (47, 79, 79)
-COLOR_LIGHT_SLATE_GREY = (119, 136, 153)
 COLOR_WHITE = (255, 255, 255)
 COLOR_BLOOD_RED = (139, 0, 0)
 
@@ -35,25 +68,22 @@ FONT_NAME = 'Consolas'
 
 
 # ==============================================================================
-# II. State Management (Principle: Coherence)
-# An Enum to manage the high-level state of the game.
+# III. State Management (Principle: Coherence)
 # ==============================================================================
 class GameState(Enum):
     QUIT = auto()
     MAIN_MENU = auto()
     OPTIONS_MENU = auto()
-    GAME_RUNNING = auto()  # Placeholder for now
+    GAME_RUNNING = auto()
 
 
 # ==============================================================================
-# III. UI Classes (Principle: Modularity)
-# Self-contained classes for different UI elements and menus.
+# IV. UI Classes (Principle: Modularity)
 # ==============================================================================
 class Button:
     """Represents a single, selectable button."""
 
     def __init__(self, y, text, font, action):
-        # We adjust the rect to be relative to the internal surface size
         self.rect = pygame.Rect(INTERNAL_WIDTH / 2 - 150, y, 300, 50)
         self.text = text
         self.font = font
@@ -79,9 +109,9 @@ class Menu:
             Button(310, "Options", self.button_font, GameState.OPTIONS_MENU),
             Button(370, "Quit", self.button_font, GameState.QUIT)
         ]
-
         self.selected_index = 0
         self.buttons[self.selected_index].is_selected = True
+        self.title_flicker_timer = 0.0
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
@@ -97,9 +127,17 @@ class Menu:
                 return self.buttons[self.selected_index].action
         return None
 
+    def update(self, delta_time):
+        """Handles time-based updates for animations."""
+        self.title_flicker_timer += delta_time
+
     def draw(self, surface):
+        # Calculate flickering brightness for the title
+        flicker = 190 + 65 * math.sin(self.title_flicker_timer * 5)
+        title_color = (int(flicker), int(flicker), int(flicker))
+
         title_text = "Gothic Rogue"
-        title_surface = self.title_font.render(title_text, True, COLOR_WHITE)
+        title_surface = self.title_font.render(title_text, True, title_color)
         title_rect = title_surface.get_rect(center=(INTERNAL_WIDTH / 2, 150))
         surface.blit(title_surface, title_rect)
 
@@ -108,7 +146,7 @@ class Menu:
 
 
 class OptionsMenu:
-    """Manages the options screen for changing game settings like resolution."""
+    """Manages the options screen."""
 
     def __init__(self):
         self.title_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 40)
@@ -124,6 +162,9 @@ class OptionsMenu:
 
         self.selected_index = 0
         self.buttons[self.selected_index].is_selected = True
+
+    def update(self, delta_time):
+        pass  # No animations in this menu yet
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
@@ -149,13 +190,10 @@ class OptionsMenu:
 
 
 # ==============================================================================
-# IV. Main Game Class (Principle: The craft of writing code)
-# This is the central hub. It manages the main loop and transitions
-# between different game states based on user actions.
+# V. Main Game Class
 # ==============================================================================
 class Game:
     def __init__(self):
-        global SCREEN_WIDTH, SCREEN_HEIGHT
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         self.internal_surface = pygame.Surface((INTERNAL_WIDTH, INTERNAL_HEIGHT))
@@ -164,50 +202,57 @@ class Game:
         self.clock = pygame.time.Clock()
         self.game_state = GameState.MAIN_MENU
 
-        self.menu = Menu()
-        self.options_menu = OptionsMenu()
+        self.menus = {
+            GameState.MAIN_MENU: Menu(),
+            GameState.OPTIONS_MENU: OptionsMenu()
+        }
 
     def run(self):
         while self.game_state != GameState.QUIT:
+            delta_time = self.clock.tick(60) / 1000.0
+
             self.handle_events()
+            self.update(delta_time)
             self.draw()
-            self.clock.tick(60)
 
         pygame.quit()
         sys.exit()
 
     def change_resolution(self, index):
-        """Changes the window size."""
+        """Changes the window size and saves the setting."""
         global SCREEN_WIDTH, SCREEN_HEIGHT, current_resolution_index
         current_resolution_index = index
         SCREEN_WIDTH, SCREEN_HEIGHT = resolutions[current_resolution_index]
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        settings_manager.set("resolution_index", index)
+        settings_manager.save_settings()
 
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.game_state = GameState.QUIT
+                return
 
-            if self.game_state == GameState.MAIN_MENU:
-                action = self.menu.handle_input(event)
+            if self.game_state in self.menus:
+                action = self.menus[self.game_state].handle_input(event)
                 if action:
-                    self.game_state = action
+                    if isinstance(action, GameState):
+                        self.game_state = action
+                    elif isinstance(action, dict):
+                        if action["type"] == "resolution":
+                            self.change_resolution(action["index"])
+                        elif action["type"] == "back":
+                            self.game_state = GameState.MAIN_MENU
 
-            elif self.game_state == GameState.OPTIONS_MENU:
-                action = self.options_menu.handle_input(event)
-                if action:
-                    if action["type"] == "resolution":
-                        self.change_resolution(action["index"])
-                    elif action["type"] == "back":
-                        self.game_state = GameState.MAIN_MENU
+    def update(self, delta_time):
+        if self.game_state in self.menus:
+            self.menus[self.game_state].update(delta_time)
 
     def draw(self):
         self.internal_surface.fill(COLOR_NEAR_BLACK)
 
-        if self.game_state == GameState.MAIN_MENU:
-            self.menu.draw(self.internal_surface)
-        elif self.game_state == GameState.OPTIONS_MENU:
-            self.options_menu.draw(self.internal_surface)
+        if self.game_state in self.menus:
+            self.menus[self.game_state].draw(self.internal_surface)
 
         scaled_surface = pygame.transform.scale(self.internal_surface, (SCREEN_WIDTH, SCREEN_HEIGHT))
         self.screen.blit(scaled_surface, (0, 0))
@@ -216,7 +261,7 @@ class Game:
 
 
 # ==============================================================================
-# V. Entry Point
+# VI. Entry Point
 # ==============================================================================
 if __name__ == "__main__":
     game = Game()
