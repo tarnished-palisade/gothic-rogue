@@ -184,25 +184,25 @@ class OptionsMenu:
 # V. Entity-Component System (ECS) (Principle: Modularity)
 # ==============================================================================
 class Component:
-    """A base class for all components."""
-    pass
-
+    """A base class for all components. Does not do anything on its own."""
+    def __init__(self):
+        pass
 
 class PositionComponent(Component):
     """Stores the x, y coordinates of an entity on the map."""
 
     def __init__(self, x, y):
+        super().__init__()  # Call the parent's __init__ method
         self.x = x
         self.y = y
-
 
 class RenderComponent(Component):
     """Stores the visual representation of an entity."""
 
     def __init__(self, char, color):
+        super().__init__()  # Call the parent's __init__ method
         self.char = char
         self.color = color
-
 
 class Entity:
     """A generic container for components."""
@@ -267,6 +267,7 @@ class Game:
                 self.game_state = GameState.QUIT
                 return
 
+            # Menu Input Handling
             if self.game_state in self.menus:
                 action = self.menus[self.game_state].handle_input(event)
                 if action:
@@ -277,6 +278,23 @@ class Game:
                             self.change_resolution(action["index"])
                         elif action["type"] == "back":
                             self.game_state = GameState.MAIN_MENU
+
+            # --- This is the corrected block ---
+            # It is now an 'elif' connected to the 'if' statement above,
+            # and correctly indented inside the 'for' loop.
+            elif self.game_state == GameState.GAME_RUNNING:
+                if event.type == pygame.KEYDOWN:
+                    pos = self.player.get_component(PositionComponent)
+                    if not pos: return
+
+                    if event.key == pygame.K_UP or event.key == pygame.K_w:
+                        pos.y -= TILE_SIZE
+                    elif event.key == pygame.K_DOWN or event.key == pygame.K_s:
+                        pos.y += TILE_SIZE
+                    elif event.key == pygame.K_LEFT or event.key == pygame.K_a:
+                        pos.x -= TILE_SIZE
+                    elif event.key == pygame.K_RIGHT or event.key == pygame.K_d:
+                        pos.x += TILE_SIZE
 
     def update(self, delta_time):
         if self.game_state in self.menus:
