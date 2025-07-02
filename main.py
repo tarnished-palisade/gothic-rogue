@@ -59,6 +59,7 @@ COLOR_BLOOD_RED = (139, 0, 0)
 
 FONT_NAME = 'Consolas'
 
+TILE_SIZE = 16 # Each grid cell will be 16x16 pixels
 
 # ==============================================================================
 # III. State Management (Principle: Coherence)
