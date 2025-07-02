@@ -184,6 +184,7 @@ class OptionsMenu:
 # ==============================================================================
 # V. Entity-Component System (ECS) (Principle: Modularity)
 # ==============================================================================
+
 class Component:
     """A base class for all components. Does not do anything on its own."""
     def __init__(self):
@@ -217,10 +218,39 @@ class Entity:
     def get_component(self, component_type):
         return self.components.get(component_type)
 
+# ==============================================================================
+# VI. Game World (Principle: Scalability)
+# Contains classes that manage the game world, map, and level data.
+# ==============================================================================
+
+class Map:
+    """
+    Manages the game map, including its tiles and rendering.
+    - Necessity: To create a persistent world for the player to exist in.
+    - Function: Holds a 2D array representing the level's layout.
+    - Effect: A visible, static game world is created on screen.
+    """
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        # Create a simple map: a floor of '.' surrounded by walls of '#'
+        self.tiles = [['#' for _ in range(width)] for _ in range(height)]
+        for y in range(1, height - 1):
+            for x in range(1, width - 1):
+                self.tiles[y][x] = '.'
+
+    def draw(self, surface, font):
+        for y, row in enumerate(self.tiles):
+            for x, tile_char in enumerate(row):
+                color = COLOR_WHITE # All tiles are white for now
+                text_surface = font.render(tile_char, True, color)
+                # We draw the map based on TILE_SIZE grid coordinates
+                surface.blit(text_surface, (x * TILE_SIZE, y * TILE_SIZE))
 
 # ==============================================================================
-# VI. Main Game Class
+# VII. Main Game Class
 # ==============================================================================
+
 class Game:
     def __init__(self):
         pygame.init()
@@ -236,6 +266,11 @@ class Game:
             GameState.OPTIONS_MENU: OptionsMenu()
         }
         self.game_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 16)
+
+        # Map Creation
+        map_width = INTERNAL_WIDTH // TILE_SIZE
+        map_height = INTERNAL_HEIGHT // TILE_SIZE
+        self.game_map = Map(map_width, map_height)
 
         # Player Creation
         self.player = Entity()
@@ -307,6 +342,8 @@ class Game:
         if self.game_state in self.menus:
             self.menus[self.game_state].draw(self.internal_surface)
         elif self.game_state == GameState.GAME_RUNNING:
+            self.game_map.draw(self.internal_surface, self.game_font)
+
             # Render the player
             pos = self.player.get_component(PositionComponent)
             render = self.player.get_component(RenderComponent)
@@ -320,9 +357,8 @@ class Game:
 
         pygame.display.flip()
 
-
 # ==============================================================================
-# VII. Entry Point
+# VIII. Entry Point
 # ==============================================================================
 if __name__ == "__main__":
     game = Game()
