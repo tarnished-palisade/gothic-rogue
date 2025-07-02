@@ -10,10 +10,10 @@ import json
 import os
 import math
 
-
 # ==============================================================================
 # I. Settings Manager (Principle: Preservation Axiom)
 # ==============================================================================
+
 class SettingsManager:
     """Manages loading and saving game settings to a JSON file."""
 
@@ -41,10 +41,10 @@ class SettingsManager:
     def set(self, key, value):
         self.settings[key] = value
 
-
 # ==============================================================================
 # II. Configuration and Constants (Principle: Change-Resilient)
 # ==============================================================================
+
 settings_manager = SettingsManager()
 
 resolutions = [(800, 600), (1024, 768), (1200, 900), (1600, 1200), (1920, 1080)]
@@ -64,16 +64,17 @@ TILE_SIZE = 16 # Each grid cell will be 16x16 pixels
 # ==============================================================================
 # III. State Management (Principle: Coherence)
 # ==============================================================================
+
 class GameState(Enum):
     QUIT = auto()
     MAIN_MENU = auto()
     OPTIONS_MENU = auto()
     GAME_RUNNING = auto()
 
-
 # ==============================================================================
 # IV. UI Classes (Principle: Modularity)
 # ==============================================================================
+
 class Button:
     """Represents a single, selectable button."""
 
@@ -89,7 +90,6 @@ class Button:
         text_surface = self.font.render(self.text, True, color)
         text_rect = text_surface.get_rect(center=self.rect.center)
         surface.blit(text_surface, text_rect)
-
 
 class Menu:
     """Manages the main menu."""
@@ -136,7 +136,6 @@ class Menu:
         for button in self.buttons:
             button.draw(surface)
 
-
 class OptionsMenu:
     """Manages the options screen."""
 
@@ -179,7 +178,6 @@ class OptionsMenu:
 
         for button in self.buttons:
             button.draw(surface)
-
 
 # ==============================================================================
 # V. Entity-Component System (ECS) (Principle: Modularity)
@@ -315,9 +313,6 @@ class Game:
                         elif action["type"] == "back":
                             self.game_state = GameState.MAIN_MENU
 
-            # --- This is the corrected block ---
-            # It is now an 'elif' connected to the 'if' statement above,
-            # and correctly indented inside the 'for' loop.
             elif self.game_state == GameState.GAME_RUNNING:
                 if event.type == pygame.KEYDOWN:
                     pos = self.player.get_component(PositionComponent)
@@ -360,6 +355,7 @@ class Game:
 # ==============================================================================
 # VIII. Entry Point
 # ==============================================================================
+
 if __name__ == "__main__":
     game = Game()
     game.run()
