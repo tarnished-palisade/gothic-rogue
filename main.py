@@ -264,6 +264,9 @@ class Game:
         }
         self.game_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 16)
 
+        # Debug Instance
+        self.debug_overlay = DebugOverlay()
+
         # Map Creation
         map_width = INTERNAL_WIDTH // TILE_SIZE
         map_height = INTERNAL_HEIGHT // TILE_SIZE
@@ -299,6 +302,11 @@ class Game:
             if event.type == pygame.QUIT:
                 self.game_state = GameState.QUIT
                 return
+
+            # Debug Overlay Toggle Key Handler
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F12:
+                    self.debug_overlay.toggle()
 
             # Menu Input Handling
             if self.game_state in self.menus:
@@ -353,11 +361,20 @@ class Game:
             render = self.player.get_component(RenderComponent)
             if pos and render:
                 text_surface = self.game_font.render(render.char, True, render.color)
+
                 # Convert grid position to pixel position for rendering, centering the character in the tile.
                 pixel_x = pos.x * TILE_SIZE + TILE_SIZE // 2
                 pixel_y = pos.y * TILE_SIZE + TILE_SIZE // 2
                 text_rect = text_surface.get_rect(center=(pixel_x, pixel_y))
                 self.internal_surface.blit(text_surface, text_rect)
+
+        # Draw the debug overlay on top of everything else on the internal surface
+        debug_data = {
+            "FPS": f"{self.clock.get_fps():.1f}",
+            "State": self.game_state.name,
+            "Player Pos": f"({self.player.get_component(PositionComponent).x}, {self.player.get_component(PositionComponent).y})"
+        }
+        self.debug_overlay.draw(self.internal_surface, debug_data)
 
         scaled_surface = pygame.transform.scale(self.internal_surface, (SCREEN_WIDTH, SCREEN_HEIGHT))
         self.screen.blit(scaled_surface, (0, 0))
@@ -365,7 +382,39 @@ class Game:
         pygame.display.flip()
 
 # ==============================================================================
-# VIII. Entry Point
+# VIII. Development Tools
+# ==============================================================================
+
+class DebugOverlay:
+    """
+    A toggleable overlay for displaying real-time development information.
+    - Necessity: To provide developers with immediate insight into the game's
+                 internal state for performance tuning and debugging.
+    - Function: Renders key game data, such as FPS and player coordinates.
+    - Effect: A non-intrusive, powerful tool for live diagnostics.
+    """
+    def __init__(self):
+        self.font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 14)
+        self.enabled = False # The overlay is off by default
+
+    def toggle(self):
+        """Switches the overlay's visibility on or off."""
+        self.enabled = not self.enabled
+
+    def draw(self, surface, data):
+        """Draws the debug information onto the provided surface."""
+        if not self.enabled:
+            return
+
+        y_offset = 5
+        for key, value in data.items():
+            text = f"{key}: {value}"
+            text_surface = self.font.render(text, True, (255, 255, 0)) # Yellow text
+            surface.blit(text_surface, (5, y_offset))
+            y_offset += 15
+
+# ==============================================================================
+# IX. Entry Point
 # ==============================================================================
 
 if __name__ == "__main__":
