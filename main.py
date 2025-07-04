@@ -189,10 +189,9 @@ class Component:
         pass
 
 class PositionComponent(Component):
-    """Stores the x, y coordinates of an entity on the map."""
-
+    """Stores the grid-based (tile) x, y coordinates of an entity."""
     def __init__(self, x, y):
-        super().__init__()  # Call the parent's __init__ method
+        super().__init__()
         self.x = x
         self.y = y
 
@@ -272,7 +271,7 @@ class Game:
 
         # Player Creation
         self.player = Entity()
-        self.player.add_component(PositionComponent(int(INTERNAL_WIDTH / 2), int(INTERNAL_HEIGHT / 2)))
+        self.player.add_component(PositionComponent(5, 5)) # Spawn at tile (5, 5)
         self.player.add_component(RenderComponent('@', COLOR_WHITE))
 
     def run(self):
@@ -313,19 +312,29 @@ class Game:
                         elif action["type"] == "back":
                             self.game_state = GameState.MAIN_MENU
 
+
             elif self.game_state == GameState.GAME_RUNNING:
                 if event.type == pygame.KEYDOWN:
                     pos = self.player.get_component(PositionComponent)
                     if not pos: return
 
+                    # Calculate potential new position
+                    next_x, next_y = pos.x, pos.y
                     if event.key == pygame.K_UP or event.key == pygame.K_w:
-                        pos.y -= TILE_SIZE
+                        next_y -= 1
                     elif event.key == pygame.K_DOWN or event.key == pygame.K_s:
-                        pos.y += TILE_SIZE
+                        next_y += 1
                     elif event.key == pygame.K_LEFT or event.key == pygame.K_a:
-                        pos.x -= TILE_SIZE
+                        next_x -= 1
                     elif event.key == pygame.K_RIGHT or event.key == pygame.K_d:
-                        pos.x += TILE_SIZE
+                        next_x += 1
+
+                    # --- COLLISION CHECK ---
+                    # Check if the target tile is walkable before moving.
+                    # The '#' character represents a non-walkable wall.
+                    if self.game_map.tiles[next_y][next_x] != '#':
+                        pos.x = next_x
+                        pos.y = next_y
 
     def update(self, delta_time):
         if self.game_state in self.menus:
@@ -344,7 +353,10 @@ class Game:
             render = self.player.get_component(RenderComponent)
             if pos and render:
                 text_surface = self.game_font.render(render.char, True, render.color)
-                text_rect = text_surface.get_rect(center=(pos.x, pos.y))
+                # Convert grid position to pixel position for rendering, centering the character in the tile.
+                pixel_x = pos.x * TILE_SIZE + TILE_SIZE // 2
+                pixel_y = pos.y * TILE_SIZE + TILE_SIZE // 2
+                text_rect = text_surface.get_rect(center=(pixel_x, pixel_y))
                 self.internal_surface.blit(text_surface, text_rect)
 
         scaled_surface = pygame.transform.scale(self.internal_surface, (SCREEN_WIDTH, SCREEN_HEIGHT))
