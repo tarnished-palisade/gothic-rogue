@@ -3,6 +3,7 @@
 # This initial implementation focuses on creating a robust, doctrine-driven
 # main menu system.
 
+import random
 import pygame
 import sys
 from enum import Enum, auto
@@ -234,15 +235,61 @@ class Map:
         self.tiles = [['#' for _ in range(width)] for _ in range(height)]
         for y in range(1, height - 1):
             for x in range(1, width - 1):
-                self.tiles[y][x] = '.'
+                # 95% chance of being a floor, 5% chance of being rubble
+                if random.randint(1, 100) > 5:
+                    self.tiles[y][x] = '.' # Floor
+                else:
+                    self.tiles[y][x] = ',' # Rubble/Debris
 
     def draw(self, surface, font):
+        # Define colors for different tile types
+        tile_colors = {
+            '#': (100, 100, 100), # Grey walls
+            '.': (50, 50, 50),   # Dark grey floor
+            ',': (40, 40, 40)    # Darker rubble
+        }
+
         for y, row in enumerate(self.tiles):
             for x, tile_char in enumerate(row):
-                color = COLOR_WHITE # All tiles are white for now
+
+                # Use the tile character to look up its color
+                color = tile_colors.get(tile_char, COLOR_WHITE)
                 text_surface = font.render(tile_char, True, color)
+
                 # We draw the map based on TILE_SIZE grid coordinates
                 surface.blit(text_surface, (x * TILE_SIZE, y * TILE_SIZE))
+
+class Camera:
+    """
+    Manages the game's viewport.
+    - Necessity: To allow the game world to be larger than the screen,
+                 and to control what portion of it is visible.
+    - Function: Tracks a target entity (the player) and centers the view on it.
+    - Effect: A scrollable view of the game map.
+    """
+    def __init__(self, width, height):
+        self.rect = pygame.Rect(0, 0, width, height)
+        self.width = width
+        self.height = height
+
+    def apply(self, entity_rect):
+        """Applies the camera offset to a given rect."""
+        return entity_rect.move(self.rect.topleft)
+
+    def update(self, target_entity):
+        """Updates the camera's position to center on the target entity."""
+        target_pos = target_entity.get_component(PositionComponent)
+        if not target_pos: return
+
+        # Convert target's grid position to pixel position
+        target_pixel_x = target_pos.x * TILE_SIZE + TILE_SIZE // 2
+        target_pixel_y = target_pos.y * TILE_SIZE + TILE_SIZE // 2
+
+        # Center the camera on the target's pixel position
+        x = -target_pixel_x + int(INTERNAL_WIDTH / 2)
+        y = -target_pixel_y + int(INTERNAL_HEIGHT / 2)
+
+        self.rect = pygame.Rect(x, y, self.width, self.height)
 
 # ==============================================================================
 # VII. Main Game Class
@@ -267,9 +314,12 @@ class Game:
         # Debug Instance
         self.debug_overlay = DebugOverlay()
 
-        # Map Creation
-        map_width = INTERNAL_WIDTH // TILE_SIZE
-        map_height = INTERNAL_HEIGHT // TILE_SIZE
+        # Camera Creation
+        self.camera = Camera(INTERNAL_WIDTH, INTERNAL_HEIGHT)
+
+        # Map Creation - Let's make the map bigger to test the camera
+        map_width = 100  # New larger width
+        map_height = 100  # New larger height
         self.game_map = Map(map_width, map_height)
 
         # Player Creation
@@ -347,26 +397,41 @@ class Game:
     def update(self, delta_time):
         if self.game_state in self.menus:
             self.menus[self.game_state].update(delta_time)
+        elif self.game_state == GameState.GAME_RUNNING:
+            self.camera.update(self.player)
 
     def draw(self):
         self.internal_surface.fill(COLOR_NEAR_BLACK)
 
         if self.game_state in self.menus:
             self.menus[self.game_state].draw(self.internal_surface)
+            # In Game.draw
         elif self.game_state == GameState.GAME_RUNNING:
-            self.game_map.draw(self.internal_surface, self.game_font)
+            # We now use the camera to offset the drawing of all world objects.
 
-            # Render the player
+            # Draw the map through the camera
+            for y, row in enumerate(self.game_map.tiles):
+                for x, tile_char in enumerate(row):
+                    tile_rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+                    visible_rect = self.camera.apply(tile_rect)
+
+                    # Simple culling: only draw if it's on screen
+                    if self.internal_surface.get_rect().colliderect(visible_rect):
+                        color = COLOR_WHITE
+                        text_surface = self.game_font.render(tile_char, True, color)
+                        self.internal_surface.blit(text_surface, visible_rect)
+
+            # Render the player through the camera
             pos = self.player.get_component(PositionComponent)
             render = self.player.get_component(RenderComponent)
             if pos and render:
-                text_surface = self.game_font.render(render.char, True, render.color)
+                player_rect = pygame.Rect(pos.x * TILE_SIZE, pos.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+                visible_rect = self.camera.apply(player_rect)
 
-                # Convert grid position to pixel position for rendering, centering the character in the tile.
-                pixel_x = pos.x * TILE_SIZE + TILE_SIZE // 2
-                pixel_y = pos.y * TILE_SIZE + TILE_SIZE // 2
-                text_rect = text_surface.get_rect(center=(pixel_x, pixel_y))
-                self.internal_surface.blit(text_surface, text_rect)
+                text_surface = self.game_font.render(render.char, True, render.color)
+                # Center the character within the visible rect
+                text_draw_rect = text_surface.get_rect(center=visible_rect.center)
+                self.internal_surface.blit(text_surface, text_draw_rect)
 
         # Draw the debug overlay on top of everything else on the internal surface
         debug_data = {
