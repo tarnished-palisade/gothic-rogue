@@ -221,6 +221,71 @@ class Entity:
 # Contains classes that manage the game world, map, and level data.
 # ==============================================================================
 
+class ProceduralCaveGenerator:
+    """Handles the creation of organic cave-like maps using Cellular Automata."""
+
+    @staticmethod
+    def _get_neighbor_wall_count(x, y, tiles):
+        """Counts the number of wall tiles in the 8 surrounding neighbors."""
+        wall_count = 0
+        for i in range(y - 1, y + 2):
+            for j in range(x - 1, x + 2):
+                if i < 0 or i >= len(tiles) or j < 0 or j >= len(tiles[0]):
+
+                    # Treat out-of-bounds as a wall to enforce edges
+                    wall_count += 1
+                elif (i, j) != (y, x) and tiles[i][j] == '#':
+                    wall_count += 1
+        return wall_count
+
+    @staticmethod
+    def _simulation_step(old_tiles):
+        """Runs a single step of the Cellular Automata simulation."""
+        width, height = len(old_tiles[0]), len(old_tiles)
+        new_tiles = [['.' for _ in range(width)] for _ in range(height)]
+
+        for y in range(height):
+            for x in range(width):
+                wall_neighbors = ProceduralCaveGenerator._get_neighbor_wall_count(x, y, old_tiles)
+                # The core rule: A tile becomes a wall if it has 5 or more wall neighbors.
+                if wall_neighbors > 4:
+                    new_tiles[y][x] = '#'
+                else:
+                    new_tiles[y][x] = '.'
+        return new_tiles
+
+    @staticmethod
+    def generate_map(width, height):
+        """Generates a complete cave map."""
+        # Step 1: Create initial random noise (45% walls)
+        tiles = [['.' for _ in range(width)] for _ in range(height)]
+        for y in range(height):
+            for x in range(width):
+                if random.randint(1, 100) < 45:
+                    tiles[y][x] = '#'
+
+        # Step 2: Run the simulation 4 times to smooth out the noise
+        for _ in range(4):
+            tiles = ProceduralCaveGenerator._simulation_step(tiles)
+
+        # Step 3: Ensure a solid border around the entire map
+        for y in range(height):
+            tiles[y][0] = '#'
+            tiles[y][width - 1] = '#'
+        for x in range(width):
+            tiles[0][x] = '#'
+            tiles[height - 1][x] = '#'
+
+        # Step 4: Add floor texture (rubble)
+        # Iterate through the final map and add details to floor tiles.
+        for y in range(height):
+            for x in range(width):
+                if tiles[y][x] == '.':
+                    if random.randint(1, 100) <= 5:  # 5% chance to have rubble rocks
+                        tiles[y][x] = ','
+
+        return tiles
+
 class Map:
     """
     Manages the game map, including its tiles and rendering.
@@ -231,15 +296,44 @@ class Map:
     def __init__(self, width, height):
         self.width = width
         self.height = height
+
+        # --- OPTION 1: Original Static Map (Commented Out) ---
+        # This was the original, hand-designed map for testing.
+        # To use this map, uncomment these lines and comment out OPTION 2.
+        #
         # Create a simple map: a floor of '.' surrounded by walls of '#'
-        self.tiles = [['#' for _ in range(width)] for _ in range(height)]
-        for y in range(1, height - 1):
-            for x in range(1, width - 1):
-                # 95% chance of being a floor, 5% chance of being rubble
-                if random.randint(1, 100) > 5:
-                    self.tiles[y][x] = '.' # Floor
-                else:
-                    self.tiles[y][x] = ',' # Rubble/Debris
+        # self.tiles = [['#' for _ in range(width)] for _ in range(height)]
+        # for y in range(1, height - 1):
+        #    for x in range(1, width - 1):
+        #        # 95% chance of being a floor, 5% chance of being rubble
+        #        if random.randint(1, 100) > 5:
+        #            self.tiles[y][x] = '.' # Floor
+        #        else:
+        #            self.tiles[y][x] = ',' # Rubble/Debris
+        # ---------------------------------------------------------
+
+        # --- OPTION 2: Procedural Generation (Active) ---
+        # This uses a generator class to create a new, random map every time.
+        # To use the static map instead, comment out these lines.
+        self.tiles = ProceduralCaveGenerator.generate_map(self.width, self.height)
+        # ---------------------------------------------------------
+
+        self.spawn_point = self.find_spawn_point()
+
+    def find_spawn_point(self):
+        """Finds the first available floor tile starting from the center."""
+        center_x, center_y = self.width // 2, self.height // 2
+        if self.tiles[center_y][center_x] == '.':
+            return center_x, center_y
+
+        # Simple spiral search if center is a wall
+        for radius in range(1, max(center_x, center_y)):
+            for i in range(-radius, radius + 1):
+                for j in range(-radius, radius + 1):
+                    x, y = center_x + j, center_y + i
+                    if self.tiles[y][x] == '.':
+                        return x, y
+        return None # Should not happen on a valid map
 
     def draw(self, surface, font):
         # Define colors for different tile types
@@ -324,7 +418,8 @@ class Game:
 
         # Player Creation
         self.player = Entity()
-        self.player.add_component(PositionComponent(5, 5)) # Spawn at tile (5, 5)
+        spawn_x, spawn_y = self.game_map.spawn_point
+        self.player.add_component(PositionComponent(spawn_x, spawn_y))
         self.player.add_component(RenderComponent('@', COLOR_WHITE))
 
     def run(self):
