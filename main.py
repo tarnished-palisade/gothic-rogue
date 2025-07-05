@@ -58,6 +58,12 @@ COLOR_NEAR_BLACK = (10, 10, 10)
 COLOR_WHITE = (255, 255, 255)
 COLOR_BLOOD_RED = (139, 0, 0)
 
+# New Cave Palette
+COLOR_DARK_BROWN = (110, 80, 50)     # A lighter, more visible brown for walls
+COLOR_MEDIUM_BROWN = (30, 25, 20)    # Keep the dark, subtle background
+COLOR_DARK_GREY = (90, 90, 90)       # This color is for the '.' if we draw it
+COLOR_DARKER_BROWN = (80, 70, 60)    # A much lighter, stony grey for rubble ','
+
 FONT_NAME = 'Consolas'
 
 TILE_SIZE = 16 # Each grid cell will be 16x16 pixels
@@ -320,6 +326,13 @@ class Map:
 
         self.spawn_point = self.find_spawn_point()
 
+        # Define colors for different tile types for easy lookup
+        self.tile_colors = {
+            '#': COLOR_DARK_BROWN,
+            '.': COLOR_DARK_GREY,  # This is for the character, not the background
+            ',': COLOR_DARKER_BROWN
+        }
+
     def find_spawn_point(self):
         """Finds the first available floor tile starting from the center."""
         center_x, center_y = self.width // 2, self.height // 2
@@ -336,22 +349,20 @@ class Map:
         return None # Should not happen on a valid map
 
     def draw(self, surface, font):
-        # Define colors for different tile types
-        tile_colors = {
-            '#': (100, 100, 100), # Grey walls
-            '.': (50, 50, 50),   # Dark grey floor
-            ',': (40, 40, 40)    # Darker rubble
-        }
+        # This method is no longer used for rendering.
+        # All camera-aware drawing is handled by the main Game.draw method.
+        pass
 
         for y, row in enumerate(self.tiles):
             for x, tile_char in enumerate(row):
-
-                # Use the tile character to look up its color
-                color = tile_colors.get(tile_char, COLOR_WHITE)
-                text_surface = font.render(tile_char, True, color)
-
-                # We draw the map based on TILE_SIZE grid coordinates
-                surface.blit(text_surface, (x * TILE_SIZE, y * TILE_SIZE))
+                # Optimization: Only draw feature tiles. The floor is the background.
+                if tile_char != '.':
+                    # Look up the character's color from the dictionary.
+                    color = self.tile_colors.get(tile_char, COLOR_WHITE)
+                    # Create the text surface for the character.
+                    text_surface = font.render(tile_char, True, color)
+                    # Blit the character onto the screen at its grid position.
+                    surface.blit(text_surface, (x * TILE_SIZE, y * TILE_SIZE))
 
 class Camera:
     """
@@ -392,6 +403,7 @@ class Camera:
 class Game:
     def __init__(self):
         pygame.init()
+        pygame.key.set_repeat(200, 75)
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         self.internal_surface = pygame.Surface((INTERNAL_WIDTH, INTERNAL_HEIGHT))
 
@@ -502,9 +514,12 @@ class Game:
             self.menus[self.game_state].draw(self.internal_surface)
             # In Game.draw
         elif self.game_state == GameState.GAME_RUNNING:
-            # We now use the camera to offset the drawing of all world objects.
+            # Draw the map's background rectangle, offset by the camera
+            map_bg_rect = pygame.Rect(0, 0, self.game_map.width * TILE_SIZE, self.game_map.height * TILE_SIZE)
+            visible_bg_rect = self.camera.apply(map_bg_rect)
+            pygame.draw.rect(self.internal_surface, COLOR_MEDIUM_BROWN, visible_bg_rect)
 
-            # Draw the map through the camera
+            # Draw the map tiles through the camera
             for y, row in enumerate(self.game_map.tiles):
                 for x, tile_char in enumerate(row):
                     tile_rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
@@ -512,7 +527,8 @@ class Game:
 
                     # Simple culling: only draw if it's on screen
                     if self.internal_surface.get_rect().colliderect(visible_rect):
-                        color = COLOR_WHITE
+                        color = self.game_map.tile_colors.get(tile_char, COLOR_WHITE)
+
                         text_surface = self.game_font.render(tile_char, True, color)
                         self.internal_surface.blit(text_surface, visible_rect)
 
