@@ -70,10 +70,11 @@ COLOR_WHITE = (255, 255, 255)  # Default text color, unselected menu items.
 COLOR_BLOOD_RED = (139, 0, 0)  # Highlight color for selected menu items.
 
 # In-Game "Earthen Cave" Palette
-COLOR_DARK_BROWN = (110, 80, 50)  # The color of cave walls ('#').
-COLOR_MEDIUM_BROWN = (30, 25, 20)  # The color of the cave's background fill.
-COLOR_DARK_GREY = (90, 90, 90)  # The color of the floor character ('.').
-COLOR_DARKER_BROWN = (80, 70, 60)  # The color of rubble or debris (',').
+COLOR_DARK_BROWN = (110, 80, 50)     # The color of cave walls ('#').
+COLOR_MEDIUM_BROWN = (30, 25, 20)    # The color of the cave's background fill.
+COLOR_DARK_GREY = (90, 90, 90)       # The color of the floor character ('.').
+COLOR_DARKER_BROWN = (80, 70, 60)    # The color of rubble or debris (',').
+COLOR_ENTITY_WHITE = (255, 255, 255) # A general color for entities like the player and rats.
 
 # --- Font and Tile Settings ---
 # The name of the monospaced font to be used for all game text.
@@ -274,6 +275,27 @@ class AIComponent(Component):
         # The 'turn_manager' parameter gives the AI context about the game world,
         # such as the player's location or the state of the map.
         pass
+
+class StatsComponent(Component):
+    """
+    Holds the core combat and descriptive stats for an entity.
+    - Necessity: To give entities attributes like health and power, which
+                 are essential for any combat or interaction system.
+    - Function: Stores numerical values for an entity's capabilities.
+    - Effect: Allows the game to quantify an entity's resilience and strength,
+              forming the basis for combat calculations.
+    """
+    def __init__(self, hp, power, speed):
+        super().__init__()
+        # The maximum health points of the entity.
+        self.max_hp = hp
+        # The current health points. Can be modified by damage or healing.
+        self.current_hp = hp
+        # The base attack power of the entity.
+        self.power = power
+        # The speed of the entity, determining how many actions it gets per round.
+        # (Currently unused, but architecturally planned for).
+        self.speed = speed
 
 class Entity:
     """A generic container for components. Represents any object in the game."""
@@ -500,14 +522,34 @@ class Game:
         self.game_map = Map(map_width, map_height)
 
         # --- Entity Creation ---
+        # Create the player entity and add all its necessary components.
         self.player = Entity()
         spawn_x, spawn_y = self.game_map.spawn_point
         self.player.add_component(PositionComponent(spawn_x, spawn_y))
-        self.player.add_component(RenderComponent('@', COLOR_WHITE))
-        self.player.add_component(TurnTakerComponent())  # The player can take turns.
+        self.player.add_component(RenderComponent('@', COLOR_ENTITY_WHITE))
+        self.player.add_component(TurnTakerComponent())
+        self.player.add_component(StatsComponent(hp=30, power=5, speed=1))  # Player stats
 
-        # This list holds all entities in the game. Enemies will be added here.
-        self.entities = [self.player]
+        # Create the first enemy entity: a rat.
+        rat = Entity()
+        # Find a valid, random spawn point for the rat.
+        while True:
+            rat_x = random.randint(1, map_width - 2)
+            rat_y = random.randint(1, map_height - 2)
+            # Ensure the spawn point is a floor tile and not where the player is.
+            if self.game_map.is_walkable(rat_x, rat_y) and (rat_x, rat_y) != (spawn_x, spawn_y):
+                rat.add_component(PositionComponent(rat_x, rat_y))
+                break  # A valid spot was found.
+
+        # Add all the necessary components to the rat entity.
+        rat.add_component(RenderComponent('r', COLOR_ENTITY_WHITE))
+        rat.add_component(TurnTakerComponent())
+        rat.add_component(AIComponent())
+        # Stats based on your "Entity Ideas" document.
+        rat.add_component(StatsComponent(hp=2, power=1, speed=1))
+
+        # This list holds all entities in the game.
+        self.entities = [self.player, rat]
 
         # --- System Initialization ---
         self.turn_manager = TurnManager(self.game_map, self.player, self.entities)
