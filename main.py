@@ -1,7 +1,5 @@
 # main.py
 # The foundational script for the Untitled Gothic Horror Roguelike.
-# This initial implementation focuses on creating a robust, doctrine-driven
-# main menu system.
 
 import random
 import pygame
