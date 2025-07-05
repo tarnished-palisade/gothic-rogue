@@ -271,10 +271,25 @@ class AIComponent(Component):
 
     def take_turn(self, turn_manager):
         """This method is called by the TurnManager for the enemy's turn."""
-        # For now, enemies do nothing. This is where their logic will go.
-        # The 'turn_manager' parameter gives the AI context about the game world,
-        # such as the player's location or the state of the map.
-        pass
+        # Get the position of this AI's entity.
+        pos = self.owner.get_component(PositionComponent)
+        if not pos:
+            return # This entity can't move.
+
+        # Choose a random direction to move in.
+        move_options = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+        dx, dy = random.choice(move_options)
+
+        next_x, next_y = pos.x + dx, pos.y + dy
+
+        # --- AI Collision Check ---
+        # Check if the target tile is walkable.
+        if turn_manager.game_map.is_walkable(next_x, next_y):
+            # Check if the target tile is free of other entities.
+            if not turn_manager.get_entity_at_location(next_x, next_y):
+                # If the move is valid, update this entity's position.
+                pos.x = next_x
+                pos.y = next_y
 
 class StatsComponent(Component):
     """
@@ -454,6 +469,14 @@ class TurnManager:
         # This creates a list of only the entities that can take a turn.
         self.turn_takers = [e for e in entities if e.get_component(TurnTakerComponent)]
 
+    def get_entity_at_location(self, x, y):
+        """Checks for and returns an entity at a given location."""
+        for entity in self.entities:
+            pos = entity.get_component(PositionComponent)
+            if pos and pos.x == x and pos.y == y:
+                return entity
+        return None
+
     def process_player_turn(self, dx, dy):
         """
         Processes the player's intended action, like moving or attacking.
@@ -464,20 +487,22 @@ class TurnManager:
 
         next_x, next_y = pos.x + dx, pos.y + dy
 
-        # --- COLLISION CHECK (Refactored Location) ---
-        # The TurnManager asks the map if the destination is valid. This keeps
-        # the responsibility of knowing the map's layout within the Map class.
-        if self.game_map.is_walkable(next_x, next_y):
-            # This is where "bump attack" logic will eventually go. If the tile
-            # is not empty but contains an enemy, this would trigger an attack
-            # instead of a move.
-            pos.x = next_x
-            pos.y = next_y
-            return True  # Player successfully moved, consuming their turn.
+        # Check if the destination tile is a wall.
+        if not self.game_map.is_walkable(next_x, next_y):
+            return False  # Player bumped a wall, no turn is consumed.
 
-        # If the player bumps into a wall, the action is invalid and does not
-        # consume a turn. The player can immediately try another action.
-        return False
+        # Check if the destination tile is occupied by another entity.
+        target_entity = self.get_entity_at_location(next_x, next_y)
+        if target_entity:
+            # This is where "bump attack" logic will go.
+            # For now, it simply blocks movement.
+            print(f"You bump into the {target_entity.get_component(RenderComponent).char}!")
+            return True  # Bumping an entity consumes a turn.
+
+        # If the tile is walkable and empty, move the player.
+        pos.x = next_x
+        pos.y = next_y
+        return True  # Player successfully moved, consuming their turn.
 
     def process_enemy_turns(self):
         """Processes turns for all non-player entities."""
