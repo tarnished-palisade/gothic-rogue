@@ -385,26 +385,57 @@ class Entity:
 # ==============================================================================
 
 class ProceduralCaveGenerator:
-    """Handles the creation of organic cave-like maps using Cellular Automata."""
+    """
+    Handles the creation of organic cave-like maps using a Cellular Automata algorithm.
+    This method works by treating each tile as a "cell" that can be either alive (a wall)
+    or dead (a floor). Over several generations (steps), simple rules about a cell's
+    neighbors create complex, natural-looking cave structures from initial random noise.
+    """
 
     @staticmethod
     def _get_neighbor_wall_count(x, y, tiles):
+        """
+        Counts the number of wall tiles in the 8 surrounding neighbors of a given cell.
+        - Necessity: This is the core sensory input for a cell in the automaton. A cell's
+                     fate is determined by how many of its neighbors are walls.
+        - Function: Iterates through a 3x3 grid centered on the cell (x, y).
+        - Effect: Returns a number from 0 to 8 representing the local wall density.
+        """
         wall_count = 0
         for i in range(y - 1, y + 2):
             for j in range(x - 1, x + 2):
+                # This checks if the neighbor is outside the map's boundaries.
                 if i < 0 or i >= len(tiles) or j < 0 or j >= len(tiles[0]):
+                    # Treating out-of-bounds areas as walls is a crucial step.
+                    # It ensures that the caves are always fully enclosed by the map edge.
                     wall_count += 1
+                # This checks if the neighbor is a wall tile, ignoring the center cell itself.
                 elif (i, j) != (y, x) and tiles[i][j] == '#':
                     wall_count += 1
         return wall_count
 
     @staticmethod
     def _simulation_step(old_tiles):
+        """
+        Runs a single "generation" of the Cellular Automata simulation.
+        - Necessity: To apply the rules of life and death to every cell simultaneously,
+                     evolving the map from random noise towards a structured cave.
+        - Function: Creates a new, blank map and fills it based on the rules applied to the old map.
+        - Effect: The map becomes smoother and more organized with each step.
+        """
         width, height = len(old_tiles[0]), len(old_tiles)
         new_tiles = [['.' for _ in range(width)] for _ in range(height)]
+
         for y in range(height):
             for x in range(width):
+                # Get the sensory input for the current cell.
                 wall_neighbors = ProceduralCaveGenerator._get_neighbor_wall_count(x, y, old_tiles)
+
+                # --- The Core Rule of the Automaton ---
+                # If a cell has more than 4 wall neighbors, it becomes a wall.
+                # If it has 4 or fewer, it becomes a floor. This simple rule, when applied
+                # to all cells at once, causes isolated walls to disappear and open
+                # spaces to be carved out, forming caves.
                 if wall_neighbors > 4:
                     new_tiles[y][x] = '#'
                 else:
@@ -413,24 +444,46 @@ class ProceduralCaveGenerator:
 
     @staticmethod
     def generate_map(width, height):
+        """
+        Generates a complete and playable cave map by orchestrating the entire process.
+        """
+        # --- Step 1: Create Initial Random Noise ---
+        # The map is seeded with a random pattern of walls and floors. This provides
+        # the chaotic starting conditions from which order will emerge. A 45% wall
+        # chance is a well-tested value that produces good results.
         tiles = [['.' for _ in range(width)] for _ in range(height)]
         for y in range(height):
             for x in range(width):
                 if random.randint(1, 100) < 45:
                     tiles[y][x] = '#'
+
+        # --- Step 2: Run the Simulation to Form Caves ---
+        # The simulation step is run multiple times. Each run smooths the noise
+        # further, connecting walls and opening up caverns. 4-5 iterations is
+        # typically enough to achieve a stable, organic-looking result.
         for _ in range(4):
             tiles = ProceduralCaveGenerator._simulation_step(tiles)
+
+        # --- Step 3: Enforce a Solid Border ---
+        # To ensure the player can never leave the map area, we manually turn all
+        # tiles at the edges of the map into walls, guaranteeing a sealed level.
         for y in range(height):
             tiles[y][0] = '#'
             tiles[y][width - 1] = '#'
         for x in range(width):
             tiles[0][x] = '#'
             tiles[height - 1][x] = '#'
+
+        # --- Step 4: Add Cosmetic Floor Texture ---
+        # To make the caves feel more natural and less uniform, we iterate through
+        # the final floor tiles and give a small percentage of them a different
+        # character, representing rubble or debris.
         for y in range(height):
             for x in range(width):
                 if tiles[y][x] == '.':
                     if random.randint(1, 100) <= 5:
                         tiles[y][x] = ','
+
         return tiles
 
 class Map:
