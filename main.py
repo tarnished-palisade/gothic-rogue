@@ -50,8 +50,10 @@ settings_manager = SettingsManager()
 # --- Display Settings ---
 # A list of all available screen resolutions for the player to choose from.
 resolutions = [(800, 600), (1024, 768), (1200, 900), (1600, 1200), (1920, 1080)]
+
 # Load the player's previously saved resolution choice.
 current_resolution_index = settings_manager.get("resolution_index")
+
 # Set the initial screen dimensions based on the loaded setting.
 SCREEN_WIDTH, SCREEN_HEIGHT = resolutions[current_resolution_index]
 
@@ -70,11 +72,11 @@ COLOR_WHITE = (255, 255, 255)  # Default text color, unselected menu items.
 COLOR_BLOOD_RED = (139, 0, 0)  # Highlight color for selected menu items.
 
 # In-Game "Earthen Cave" Palette
-COLOR_DARK_BROWN = (110, 80, 50)     # The color of cave walls ('#').
-COLOR_MEDIUM_BROWN = (30, 25, 20)    # The color of the cave's background fill.
-COLOR_DARK_GREY = (90, 90, 90)       # The color of the floor character ('.').
-COLOR_DARKER_BROWN = (80, 70, 60)    # The color of rubble or debris (',').
-COLOR_ENTITY_WHITE = (255, 255, 255) # A general color for entities like the player and rats.
+COLOR_DARK_BROWN = (110, 80, 50)  # The color of cave walls ('#').
+COLOR_MEDIUM_BROWN = (30, 25, 20)  # The color of the cave's background fill.
+COLOR_DARK_GREY = (90, 90, 90)  # The color of the floor character ('.').
+COLOR_DARKER_BROWN = (80, 70, 60)  # The color of rubble or debris (',').
+COLOR_ENTITY_WHITE = (255, 255, 255)  # A general color for entities like the player and rats.
 
 # --- Font and Tile Settings ---
 # The name of the monospaced font to be used for all game text.
@@ -98,6 +100,7 @@ class GameState(Enum):
     QUIT = auto()  # State to signal the application should close.
     MAIN_MENU = auto()  # State for when the main menu is displayed.
     OPTIONS_MENU = auto()  # State for when the options menu is displayed.
+    PLAYER_DEAD = auto()  # A new state for when the player has died.
 
     # The original GAME_RUNNING state has been replaced by a more granular
     # turn-based system to provide more precise control over game flow.
@@ -262,34 +265,88 @@ class TurnTakerComponent(Component):
 
 class AIComponent(Component):
     """
-    A placeholder for AI logic. Will eventually handle enemy behavior.
-    - Necessity: To give non-player entities a way to decide their actions.
-    - Function: Contains the logic for what an entity does on its turn.
-    - Effect: Enables enemies to move, attack, or perform other actions,
-              bringing the game world to life.
+    Handles all logic for non-player entities, from movement to combat.
+    - Necessity: To give enemies autonomy and make the world interactive.
+    - Function: Contains a state machine (IDLE/ACTIVE) and logic for each state.
+    - Effect: Creates dynamic, responsive enemies that can hunt the player.
     """
 
-    def take_turn(self, turn_manager):
-        """This method is called by the TurnManager for the enemy's turn."""
-        # Get the position of this AI's entity.
-        pos = self.owner.get_component(PositionComponent)
-        if not pos:
-            return # This entity can't move.
+    def __init__(self, sight_radius=8):
+        super().__init__()
+        self.state = 'IDLE'
+        self.sight_radius = sight_radius
+        self.turns_since_player_seen = 0
 
-        # Choose a random direction to move in.
+    def take_turn(self, turn_manager, player):
+        """Called by the TurnManager for the enemy's turn. Contains all AI logic."""
+        # Get this entity's position and the player's position.
+        pos = self.owner.get_component(PositionComponent)
+        player_pos = player.get_component(PositionComponent)
+        if not pos or not player_pos: return
+
+        # --- State Transition Logic ---
+        # Calculate distance to player (Manhattan distance is fast and good for grids).
+        distance_to_player = abs(pos.x - player_pos.x) + abs(pos.y - player_pos.y)
+
+        if distance_to_player <= self.sight_radius:
+            self.state = 'ACTIVE'
+            self.turns_since_player_seen = 0
+        else:
+            self.turns_since_player_seen += 1
+            # If player is unseen for 5 turns, go back to idle.
+            if self.turns_since_player_seen >= 5:
+                self.state = 'IDLE'
+
+        # --- Action Logic based on State ---
+        if self.state == 'ACTIVE':
+            # 5% chance to do nothing, adding variety to behavior.
+            if random.randint(1, 100) <= 5:
+                return  # Skip turn.
+
+            # If adjacent to the player, attack.
+            if distance_to_player <= 1:
+                turn_manager.process_attack(self.owner, player)
+            # Otherwise, move towards the player.
+            else:
+                self.move_towards(player_pos, turn_manager)
+
+        elif self.state == 'IDLE':
+            # Perform a simple random walk.
+            self.move_randomly(turn_manager)
+
+    def move_towards(self, target_pos, turn_manager):
+        """Moves the entity one step closer to the target position."""
+        pos = self.owner.get_component(PositionComponent)
+        dx = target_pos.x - pos.x
+        dy = target_pos.y - pos.y
+
+        # Normalize the direction vector to get a single step.
+        if dx > 0:
+            dx = 1
+        elif dx < 0:
+            dx = -1
+        if dy > 0:
+            dy = 1
+        elif dy < 0:
+            dy = -1
+
+        # Check if the intended move is valid before committing.
+        next_x, next_y = pos.x + dx, pos.y + dy
+        if turn_manager.game_map.is_walkable(next_x, next_y) and not turn_manager.get_entity_at_location(next_x,
+                                                                                                         next_y):
+            pos.x = next_x
+            pos.y = next_y
+
+    def move_randomly(self, turn_manager):
+        """Moves the entity one step in a random valid direction."""
+        pos = self.owner.get_component(PositionComponent)
         move_options = [(0, -1), (0, 1), (-1, 0), (1, 0)]
         dx, dy = random.choice(move_options)
-
         next_x, next_y = pos.x + dx, pos.y + dy
-
-        # --- AI Collision Check ---
-        # Check if the target tile is walkable.
-        if turn_manager.game_map.is_walkable(next_x, next_y):
-            # Check if the target tile is free of other entities.
-            if not turn_manager.get_entity_at_location(next_x, next_y):
-                # If the move is valid, update this entity's position.
-                pos.x = next_x
-                pos.y = next_y
+        if turn_manager.game_map.is_walkable(next_x, next_y) and not turn_manager.get_entity_at_location(next_x,
+                                                                                                         next_y):
+            pos.x = next_x
+            pos.y = next_y
 
 class StatsComponent(Component):
     """
@@ -300,16 +357,12 @@ class StatsComponent(Component):
     - Effect: Allows the game to quantify an entity's resilience and strength,
               forming the basis for combat calculations.
     """
+
     def __init__(self, hp, power, speed):
         super().__init__()
-        # The maximum health points of the entity.
         self.max_hp = hp
-        # The current health points. Can be modified by damage or healing.
         self.current_hp = hp
-        # The base attack power of the entity.
         self.power = power
-        # The speed of the entity, determining how many actions it gets per round.
-        # (Currently unused, but architecturally planned for).
         self.speed = speed
 
 class Entity:
@@ -320,8 +373,6 @@ class Entity:
 
     def add_component(self, component):
         """Adds a component to the entity and sets its owner."""
-        # This line establishes a crucial link, allowing any component
-        # to access its parent entity and, through it, its sibling components.
         component.owner = self
         self.components[type(component)] = component
 
@@ -406,20 +457,18 @@ class Map:
         center_x, center_y = self.width // 2, self.height // 2
         if self.tiles[center_y][center_x] == '.':
             return center_x, center_y
-        # If the center is a wall, this performs a simple square-based spiral search.
-        # It checks progressively larger squares around the center point.
         for radius in range(1, max(center_x, center_y)):
             for i in range(-radius, radius + 1):
                 for j in range(-radius, radius + 1):
                     x, y = center_x + j, center_y + i
                     if 0 <= y < self.height and 0 <= x < self.width and self.tiles[y][x] == '.':
                         return x, y
-        return None  # Should not happen on a valid map
+        return None
 
     def is_walkable(self, x, y):
         """Checks if a given tile is walkable (i.e., not a wall)."""
         if not (0 <= x < self.width and 0 <= y < self.height):
-            return False  # Out of bounds is not walkable
+            return False
         return self.tiles[y][x] != '#'
 
 class Camera:
@@ -455,19 +504,24 @@ class Camera:
 
 class TurnManager:
     """
-    Orchestrates the turn-based logic of the game.
+    Orchestrates the turn-based logic of the game, including combat.
     - Necessity: To enforce the core roguelike rule: the world only moves
-                 when the player acts.
+                 when the player acts, and to resolve interactions.
     - Function: Manages whose turn it is and processes entity actions.
     - Effect: A structured, tactical gameplay flow.
     """
 
-    def __init__(self, game_map, player, entities):
-        self.game_map = game_map
-        self.player = player
-        self.entities = entities  # A list of all entities in the game.
+    def __init__(self, game_object):
+        """
+        Initializes the TurnManager.
+        - game_object: A reference back to the main Game instance.
+        """
+        self.game = game_object  # Store the reference
+        self.game_map = game_object.game_map
+        self.player = game_object.player
+        self.entities = game_object.entities
         # This creates a list of only the entities that can take a turn.
-        self.turn_takers = [e for e in entities if e.get_component(TurnTakerComponent)]
+        self.turn_takers = [e for e in self.entities if e.get_component(TurnTakerComponent)]
 
     def get_entity_at_location(self, x, y):
         """Checks for and returns an entity at a given location."""
@@ -478,43 +532,65 @@ class TurnManager:
         return None
 
     def process_player_turn(self, dx, dy):
-        """
-        Processes the player's intended action, like moving or attacking.
-        Returns True if the action took a turn, False otherwise.
-        """
+        """Processes the player's intended action, like moving or attacking."""
         pos = self.player.get_component(PositionComponent)
         if not pos: return False
 
         next_x, next_y = pos.x + dx, pos.y + dy
 
-        # Check if the destination tile is a wall.
         if not self.game_map.is_walkable(next_x, next_y):
-            return False  # Player bumped a wall, no turn is consumed.
+            return False
 
-        # Check if the destination tile is occupied by another entity.
         target_entity = self.get_entity_at_location(next_x, next_y)
         if target_entity:
-            # This is where "bump attack" logic will go.
-            # For now, it simply blocks movement.
-            print(f"You bump into the {target_entity.get_component(RenderComponent).char}!")
-            return True  # Bumping an entity consumes a turn.
+            self.process_attack(self.player, target_entity)
+            return True
 
-        # If the tile is walkable and empty, move the player.
         pos.x = next_x
         pos.y = next_y
-        return True  # Player successfully moved, consuming their turn.
+        return True
 
     def process_enemy_turns(self):
         """Processes turns for all non-player entities."""
-        for entity in self.turn_takers:
-            if entity is self.player:
-                continue  # The player's turn is handled separately.
+        # We iterate over a copy of the list, as entities might be removed during their turn.
+        for entity in list(self.turn_takers):
+            if entity is self.player or entity not in self.entities:
+                continue
 
             ai = entity.get_component(AIComponent)
             if ai:
-                # This is where each enemy's AI logic is executed.
-                ai.take_turn(self)
-        pass
+                ai.take_turn(self, self.player)
+
+    def process_attack(self, attacker, defender):
+        """Handles the logic for one entity attacking another."""
+        attacker_stats = attacker.get_component(StatsComponent)
+        defender_stats = defender.get_component(StatsComponent)
+
+        if not attacker_stats or not defender_stats: return
+
+        damage = attacker_stats.power
+        defender_stats.current_hp -= damage
+
+        attacker_char = attacker.get_component(RenderComponent).char
+        defender_char = defender.get_component(RenderComponent).char
+        print(f"The {attacker_char} strikes the {defender_char} for {damage} damage!")
+
+        # Check if the defender died.
+        if defender_stats.current_hp <= 0:
+            self.kill_entity(defender)
+
+    def kill_entity(self, entity):
+        """Removes a dead entity from the game."""
+        char = entity.get_component(RenderComponent).char
+        print(f"The {char} is slain!")
+
+        # If the player died, end the game.
+        if entity is self.player:
+            self.game.game_state = GameState.PLAYER_DEAD
+        else:
+            # Remove the entity from all tracked lists.
+            self.game.entities.remove(entity)
+            self.turn_takers.remove(entity)
 
 # ==============================================================================
 # VIII. Main Game Class
@@ -525,9 +601,6 @@ class Game:
 
     def __init__(self):
         pygame.init()
-        # The global key repeat is disabled. We will build a more controlled
-        # "fast move" system on top of our turn-based logic, which gives us
-        # more precision over the game's speed and responsiveness.
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         self.internal_surface = pygame.Surface((INTERNAL_WIDTH, INTERNAL_HEIGHT))
 
@@ -540,6 +613,7 @@ class Game:
             GameState.OPTIONS_MENU: OptionsMenu()
         }
         self.game_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 16)
+        self.death_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 60)
         self.debug_overlay = DebugOverlay()
         self.camera = Camera(INTERNAL_WIDTH, INTERNAL_HEIGHT)
 
@@ -547,58 +621,45 @@ class Game:
         self.game_map = Map(map_width, map_height)
 
         # --- Entity Creation ---
-        # Create the player entity and add all its necessary components.
         self.player = Entity()
         spawn_x, spawn_y = self.game_map.spawn_point
         self.player.add_component(PositionComponent(spawn_x, spawn_y))
         self.player.add_component(RenderComponent('@', COLOR_ENTITY_WHITE))
         self.player.add_component(TurnTakerComponent())
-        self.player.add_component(StatsComponent(hp=30, power=5, speed=1))  # Player stats
+        self.player.add_component(StatsComponent(hp=30, power=5, speed=1))
 
-        # Create the first enemy entity: a rat.
         rat = Entity()
-        # Find a valid, random spawn point for the rat.
         while True:
             rat_x = random.randint(1, map_width - 2)
             rat_y = random.randint(1, map_height - 2)
-            # Ensure the spawn point is a floor tile and not where the player is.
             if self.game_map.is_walkable(rat_x, rat_y) and (rat_x, rat_y) != (spawn_x, spawn_y):
                 rat.add_component(PositionComponent(rat_x, rat_y))
-                break  # A valid spot was found.
+                break
 
-        # Add all the necessary components to the rat entity.
         rat.add_component(RenderComponent('r', COLOR_ENTITY_WHITE))
         rat.add_component(TurnTakerComponent())
         rat.add_component(AIComponent())
-        # Stats based on your "Entity Ideas" document.
         rat.add_component(StatsComponent(hp=2, power=1, speed=1))
 
-        # This list holds all entities in the game.
         self.entities = [self.player, rat]
 
         # --- System Initialization ---
-        self.turn_manager = TurnManager(self.game_map, self.player, self.entities)
+        # The TurnManager now gets a reference to the whole Game object for better context.
+        self.turn_manager = TurnManager(game_object=self)
 
         # --- Fast Movement System Attributes ---
-        # Stores the player's current directional intent (e.g., {'dx': 1, 'dy': 0}).
         self.fast_move_intent = {'dx': 0, 'dy': 0}
-        # Accumulates delta_time to trigger turns at a fixed interval.
         self.fast_move_timer = 0.0
-        # The time in seconds between each fast move turn (e.g., 0.1 = 10 turns/sec).
         self.FAST_MOVE_INTERVAL = 0.1
-        # A flag to disable fast movement when enemies are visible.
         self.is_in_combat = False
 
     def run(self):
         """The main game loop. Continues until the game state is QUIT."""
         while self.game_state != GameState.QUIT:
-            # Get the time elapsed since the last frame, in seconds.
             delta_time = self.clock.tick(60) / 1000.0
-
             self.handle_events()
             self.update(delta_time)
             self.draw()
-
         pygame.quit()
         sys.exit()
 
@@ -618,13 +679,15 @@ class Game:
                 self.game_state = GameState.QUIT
                 return
 
-            # --- Input for both Tactical and Fast Movement ---
-            # We now capture both key presses and releases to manage intent.
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_F12:
                     self.debug_overlay.toggle()
 
-                # Update fast move intent on key press
+                # If the player is dead, any key press quits the game.
+                if self.game_state == GameState.PLAYER_DEAD:
+                    self.game_state = GameState.QUIT
+                    return
+
                 if event.key == pygame.K_UP or event.key == pygame.K_w:
                     self.fast_move_intent['dy'] = -1
                 elif event.key == pygame.K_DOWN or event.key == pygame.K_s:
@@ -635,7 +698,6 @@ class Game:
                     self.fast_move_intent['dx'] = 1
 
             if event.type == pygame.KEYUP:
-                # Clear fast move intent on key release
                 if (event.key == pygame.K_UP or event.key == pygame.K_w) and self.fast_move_intent['dy'] == -1:
                     self.fast_move_intent['dy'] = 0
                 elif (event.key == pygame.K_DOWN or event.key == pygame.K_s) and self.fast_move_intent['dy'] == 1:
@@ -645,7 +707,6 @@ class Game:
                 elif (event.key == pygame.K_RIGHT or event.key == pygame.K_d) and self.fast_move_intent['dx'] == 1:
                     self.fast_move_intent['dx'] = 0
 
-            # --- Input Handling by Game State ---
             if self.game_state in self.menus:
                 action = self.menus[self.game_state].handle_input(event)
                 if action:
@@ -657,7 +718,6 @@ class Game:
                         elif action["type"] == "back":
                             self.game_state = GameState.MAIN_MENU
 
-            # Tactical, one-press-one-move logic. Only fires on a new key press.
             elif self.game_state == GameState.PLAYER_TURN:
                 if event.type == pygame.KEYDOWN:
                     dx, dy = 0, 0
@@ -669,7 +729,6 @@ class Game:
                         dx = -1
                     elif event.key == pygame.K_RIGHT or event.key == pygame.K_d:
                         dx = 1
-
                     if dx != 0 or dy != 0:
                         if self.turn_manager.process_player_turn(dx, dy):
                             self.game_state = GameState.ENEMY_TURN
@@ -679,58 +738,44 @@ class Game:
         if self.game_state in self.menus:
             self.menus[self.game_state].update(delta_time)
 
-        # --- Fast Movement Logic ---
-        # This block handles the "hold-to-move" quality-of-life feature.
-        # It checks if we are not in combat and if the player is holding a key.
         if not self.is_in_combat and self.game_state == GameState.PLAYER_TURN:
-            # Check if there is an active intent to move.
             move_intent = (self.fast_move_intent['dx'] != 0 or self.fast_move_intent['dy'] != 0)
             if move_intent:
                 self.fast_move_timer += delta_time
-                # If enough time has passed, process a turn.
                 if self.fast_move_timer >= self.FAST_MOVE_INTERVAL:
-                    self.fast_move_timer = 0.0  # Reset timer
+                    self.fast_move_timer = 0.0
                     if self.turn_manager.process_player_turn(self.fast_move_intent['dx'], self.fast_move_intent['dy']):
                         self.game_state = GameState.ENEMY_TURN
 
-        # --- Core Turn-Based Logic ---
         if self.game_state == GameState.ENEMY_TURN:
             self.turn_manager.process_enemy_turns()
-            self.game_state = GameState.PLAYER_TURN
+            if self.game_state != GameState.PLAYER_DEAD:
+                self.game_state = GameState.PLAYER_TURN
 
     def draw(self):
         """Draws everything to the screen."""
-        # The camera update is now the first step of drawing. This ensures
-        # it has the absolute final position of the player for the current
-        # frame, preventing any visual flicker or lag.
-        if self.game_state in [GameState.PLAYER_TURN, GameState.ENEMY_TURN]:
+        if self.game_state in [GameState.PLAYER_TURN, GameState.ENEMY_TURN, GameState.PLAYER_DEAD]:
             self.camera.update(self.player)
 
         self.internal_surface.fill(COLOR_NEAR_BLACK)
 
-        # Draw the active menu if in a menu state.
         if self.game_state in self.menus:
             self.menus[self.game_state].draw(self.internal_surface)
 
-        # Draw the game world if in a gameplay state.
-        elif self.game_state in [GameState.PLAYER_TURN, GameState.ENEMY_TURN]:
-            # Draw the map's background rectangle, offset by the camera.
+        elif self.game_state in [GameState.PLAYER_TURN, GameState.ENEMY_TURN, GameState.PLAYER_DEAD]:
             map_bg_rect = pygame.Rect(0, 0, self.game_map.width * TILE_SIZE, self.game_map.height * TILE_SIZE)
             visible_bg_rect = self.camera.apply(map_bg_rect)
             pygame.draw.rect(self.internal_surface, COLOR_MEDIUM_BROWN, visible_bg_rect)
 
-            # Draw the map tiles through the camera.
             for y, row in enumerate(self.game_map.tiles):
                 for x, tile_char in enumerate(row):
                     tile_rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
                     visible_rect = self.camera.apply(tile_rect)
-                    # Simple culling: only draw if it's on screen.
                     if self.internal_surface.get_rect().colliderect(visible_rect):
                         color = self.game_map.tile_colors.get(tile_char, COLOR_WHITE)
                         text_surface = self.game_font.render(tile_char, True, color)
                         self.internal_surface.blit(text_surface, visible_rect)
 
-            # Render all entities through the camera.
             for entity in self.entities:
                 pos = entity.get_component(PositionComponent)
                 render = entity.get_component(RenderComponent)
@@ -741,17 +786,19 @@ class Game:
                     text_draw_rect = text_surface.get_rect(center=visible_rect.center)
                     self.internal_surface.blit(text_surface, text_draw_rect)
 
-        # Draw the debug overlay on top of everything else.
-        player_pos_comp = self.player.get_component(PositionComponent)
-        player_pos_text = f"({player_pos_comp.x}, {player_pos_comp.y})" if player_pos_comp else "N/A"
+        if self.game_state == GameState.PLAYER_DEAD:
+            death_text = self.death_font.render("YOU DIED", True, COLOR_BLOOD_RED)
+            text_rect = death_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2))
+            self.internal_surface.blit(death_text, text_rect)
+
+        player_stats = self.player.get_component(StatsComponent)
         debug_data = {
             "FPS": f"{self.clock.get_fps():.1f}",
             "State": self.game_state.name,
-            "Player Pos": player_pos_text
+            "Player HP": f"{player_stats.current_hp}/{player_stats.max_hp}" if player_stats else "N/A"
         }
         self.debug_overlay.draw(self.internal_surface, debug_data)
 
-        # Scale the internal surface to the final screen size and draw it.
         scaled_surface = pygame.transform.scale(self.internal_surface, (SCREEN_WIDTH, SCREEN_HEIGHT))
         self.screen.blit(scaled_surface, (0, 0))
 
