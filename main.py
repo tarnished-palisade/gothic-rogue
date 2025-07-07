@@ -78,6 +78,16 @@ COLOR_DARK_GREY = (90, 90, 90)  # The color of the floor character ('.').
 COLOR_DARKER_BROWN = (80, 70, 60)  # The color of rubble or debris (',').
 COLOR_ENTITY_WHITE = (255, 255, 255)  # A general color for entities like the player and rats.
 
+# --- New HUD Color Palette ---
+COLOR_HEALTH_GREEN = (0, 255, 0) # Safe health
+COLOR_HEALTH_YELLOW = (255, 255, 0) # Caution health
+COLOR_HEALTH_ORANGE = (255, 165, 0) # Danger health
+COLOR_HEALTH_RED = (255, 0, 0) # Critical health
+COLOR_HUD_EMPTY_DASH = (50, 50, 50) # Color for depleted health dashes
+
+# --- New HUD Configuration ---
+HUD_HEALTH_BAR_DASHES = 20 # The total number of dashes in the health bar
+
 # --- Font and Tile Settings ---
 # The name of the monospaced font to be used for all game text.
 # 'Consolas' is chosen for its clarity and classic roguelike feel.
@@ -667,7 +677,6 @@ class Game:
         }
         self.game_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 16)
         self.death_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 60)
-        self.debug_overlay = DebugOverlay()
         self.camera = Camera(INTERNAL_WIDTH, INTERNAL_HEIGHT)
 
         map_width, map_height = 100, 100
@@ -699,6 +708,8 @@ class Game:
         # --- System Initialization ---
         # The TurnManager now gets a reference to the whole Game object for better context.
         self.turn_manager = TurnManager(game_object=self)
+        self.hud = HUD(self.game_font)
+        self.debug_overlay = DebugOverlay()
 
         # --- Fast Movement System Attributes ---
         self.fast_move_intent = {'dx': 0, 'dy': 0}
@@ -829,6 +840,7 @@ class Game:
                         text_surface = self.game_font.render(tile_char, True, color)
                         self.internal_surface.blit(text_surface, visible_rect)
 
+            # Render all entities through the camera.
             for entity in self.entities:
                 pos = entity.get_component(PositionComponent)
                 render = entity.get_component(RenderComponent)
@@ -838,6 +850,10 @@ class Game:
                     text_surface = self.game_font.render(render.char, True, render.color)
                     text_draw_rect = text_surface.get_rect(center=visible_rect.center)
                     self.internal_surface.blit(text_surface, text_draw_rect)
+
+            # --- Draw HUD ---
+            # This new line calls our HUD's draw method each frame.
+            self.hud.draw(self.internal_surface, self.player)
 
         if self.game_state == GameState.PLAYER_DEAD:
             death_text = self.death_font.render("YOU DIED", True, COLOR_BLOOD_RED)
@@ -858,7 +874,76 @@ class Game:
         pygame.display.flip()
 
 # ==============================================================================
-# IX. Development Tools
+# IX. Heads-Up Display (HUD) System
+# ==============================================================================
+
+class HUD:
+    """
+    Manages the rendering of all persistent on-screen UI elements,
+    such as the health bar and message log.
+    - Necessity: To provide the player with critical, real-time feedback
+                 about their status and game events.
+    - Function: Draws static and dynamic UI elements in fixed positions.
+    - Effect: A clear, informative overlay that enables tactical decision-making.
+    """
+
+    def __init__(self, font):
+        self.font = font
+        self.messages = []  # This will hold the game log messages later.
+
+    def draw(self, surface, player):
+        """Draws all HUD elements onto the provided surface."""
+        self.draw_health_bar(surface, player)
+        # self.draw_message_log(surface) # This will be implemented next.
+
+    def draw_health_bar(self, surface, player):
+        """Calculates and draws the player's health bar."""
+        player_stats = player.get_component(StatsComponent)
+        if not player_stats: return
+
+        # --- Health Bar Calculation ---
+        # This determines how many dashes should be "filled" based on current HP.
+        health_percentage = player_stats.current_hp / player_stats.max_hp
+        num_active_dashes = int(health_percentage * HUD_HEALTH_BAR_DASHES)
+
+        # --- Color Determination Logic (The "Pokémon Component") ---
+        # The color of the bar changes based on the number of active dashes,
+        # providing an immediate visual cue of the player's status.
+        if num_active_dashes >= 11:
+            bar_color = COLOR_HEALTH_GREEN
+        elif 5 <= num_active_dashes <= 10:
+            bar_color = COLOR_HEALTH_YELLOW
+        elif 2 <= num_active_dashes <= 4:
+            bar_color = COLOR_HEALTH_ORANGE
+        else:  # This covers the 1 dash and 0 dash cases.
+            bar_color = COLOR_HEALTH_RED
+
+        # --- String Construction ---
+        # Build the visual parts of the bar.
+        active_bar_string = "—" * num_active_dashes
+        inactive_bar_string = "—" * (HUD_HEALTH_BAR_DASHES - num_active_dashes)
+        numerical_text = f" HP: {player_stats.current_hp}/{player_stats.max_hp}"
+
+        # --- Rendering ---
+        # Define the starting position for the HUD in the top-left corner.
+        x, y = 10, 10
+
+        # Render the active (filled) part of the bar.
+        active_surface = self.font.render(active_bar_string, True, bar_color)
+        surface.blit(active_surface, (x, y))
+
+        # Render the inactive (empty) part of the bar, positioned after the active part.
+        inactive_x = x + active_surface.get_width()
+        inactive_surface = self.font.render(inactive_bar_string, True, COLOR_HUD_EMPTY_DASH)
+        surface.blit(inactive_surface, (inactive_x, y))
+
+        # Render the numerical text, positioned after the full bar.
+        text_x = inactive_x + inactive_surface.get_width()
+        text_surface = self.font.render(numerical_text, True, COLOR_WHITE)
+        surface.blit(text_surface, (text_x, y))
+
+# ==============================================================================
+# X. Development Tools
 # ==============================================================================
 
 class DebugOverlay:
@@ -882,7 +967,7 @@ class DebugOverlay:
         """Draws the debug information onto the provided surface."""
         if not self.enabled:
             return
-        y_offset = 5
+        y_offset = 30 # Move down to not overlap with the new HUD
         for key, value in data.items():
             text = f"{key}: {value}"
             text_surface = self.font.render(text, True, (255, 255, 0))
@@ -890,7 +975,7 @@ class DebugOverlay:
             y_offset += 15
 
 # ==============================================================================
-# X. Entry Point
+# XI. Entry Point
 # ==============================================================================
 
 if __name__ == "__main__":
