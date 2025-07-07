@@ -88,6 +88,13 @@ COLOR_HUD_EMPTY_DASH = (50, 50, 50) # Color for depleted health dashes
 # --- New HUD Configuration ---
 HUD_HEALTH_BAR_DASHES = 20 # The total number of dashes in the health bar
 
+# --- New Message Log Configuration ---
+HUD_MESSAGE_COUNT = 5 # The maximum number of messages to display at once.
+# Add some default colors for different message types for future use.
+COLOR_MESSAGE_DEFAULT = (255, 255, 255) # White for standard messages.
+COLOR_MESSAGE_DAMAGE = (255, 100, 100) # Light red for damage messages.
+COLOR_MESSAGE_HEAL = (100, 255, 100)   # Light green for healing messages.
+
 # --- Font and Tile Settings ---
 # The name of the monospaced font to be used for all game text.
 # 'Consolas' is chosen for its clarity and classic roguelike feel.
@@ -636,7 +643,7 @@ class TurnManager:
 
         attacker_char = attacker.get_component(RenderComponent).char
         defender_char = defender.get_component(RenderComponent).char
-        print(f"The {attacker_char} strikes the {defender_char} for {damage} damage!")
+        self.game.hud.add_message(f"The {attacker_char} strikes the {defender_char} for {damage} damage!", COLOR_MESSAGE_DAMAGE)
 
         # Check if the defender died.
         if defender_stats.current_hp <= 0:
@@ -645,7 +652,7 @@ class TurnManager:
     def kill_entity(self, entity):
         """Removes a dead entity from the game."""
         char = entity.get_component(RenderComponent).char
-        print(f"The {char} is slain!")
+        self.game.hud.add_message(f"The {char} is slain!", COLOR_MESSAGE_DEFAULT)
 
         # If the player died, end the game.
         if entity is self.player:
@@ -891,10 +898,23 @@ class HUD:
         self.font = font
         self.messages = []  # This will hold the game log messages later.
 
+    def add_message(self, text, color=COLOR_MESSAGE_DEFAULT):
+        """
+        Adds a new message to the HUD's message log.
+        - Necessity: To provide a centralized way for other game systems
+                     to send feedback to the player.
+        - Function: Appends a new message (text and color) to a list and
+                    ensures the list does not exceed a maximum size.
+        - Effect: The UI can display a scrolling log of recent game events.
+        """
+        self.messages.insert(0, (text, color))
+        if len(self.messages) > HUD_MESSAGE_COUNT:
+            self.messages.pop()
+
     def draw(self, surface, player):
         """Draws all HUD elements onto the provided surface."""
         self.draw_health_bar(surface, player)
-        # self.draw_message_log(surface) # This will be implemented next.
+        self.draw_message_log(surface)
 
     def draw_health_bar(self, surface, player):
         """Calculates and draws the player's health bar."""
@@ -902,24 +922,20 @@ class HUD:
         if not player_stats: return
 
         # --- Health Bar Calculation ---
-        # This determines how many dashes should be "filled" based on current HP.
         health_percentage = player_stats.current_hp / player_stats.max_hp
         num_active_dashes = int(health_percentage * HUD_HEALTH_BAR_DASHES)
 
         # --- Color Determination Logic (The "Pokémon Component") ---
-        # The color of the bar changes based on the number of active dashes,
-        # providing an immediate visual cue of the player's status.
         if num_active_dashes >= 11:
             bar_color = COLOR_HEALTH_GREEN
         elif 5 <= num_active_dashes <= 10:
             bar_color = COLOR_HEALTH_YELLOW
         elif 2 <= num_active_dashes <= 4:
             bar_color = COLOR_HEALTH_ORANGE
-        else:  # This covers the 1 dash and 0 dash cases.
+        else:
             bar_color = COLOR_HEALTH_RED
 
         # --- String Construction ---
-        # Build the visual parts of the bar.
         active_bar_string = "—" * num_active_dashes
         inactive_bar_string = "—" * (HUD_HEALTH_BAR_DASHES - num_active_dashes)
         numerical_text = f" HP: {player_stats.current_hp}/{player_stats.max_hp}"
@@ -941,6 +957,18 @@ class HUD:
         text_x = inactive_x + inactive_surface.get_width()
         text_surface = self.font.render(numerical_text, True, COLOR_WHITE)
         surface.blit(text_surface, (text_x, y))
+
+    def draw_message_log(self, surface):
+        """
+        Draws the game's message log to the screen.
+        """
+        x = 10
+        y = 30  # Start below the health bar.
+
+        for text, color in self.messages:
+            text_surface = self.font.render(text, True, color)
+            surface.blit(text_surface, (x, y))
+            y += self.font.get_height() + 2
 
 # ==============================================================================
 # X. Development Tools
@@ -965,13 +993,22 @@ class DebugOverlay:
 
     def draw(self, surface, data):
         """Draws the debug information onto the provided surface."""
-        if not self.enabled:
-            return
-        y_offset = 30 # Move down to not overlap with the new HUD
+        if not self.enabled: return
+
+        # Start the Y-position near the top.
+        y_offset = 10
+
+        # Define a right-side margin.
+        margin = 10
+
         for key, value in data.items():
             text = f"{key}: {value}"
             text_surface = self.font.render(text, True, (255, 255, 0))
-            surface.blit(text_surface, (5, y_offset))
+
+            # Calculate the X-position to right-align the text.
+            x_pos = INTERNAL_WIDTH - text_surface.get_width() - margin
+
+            surface.blit(text_surface, (x_pos, y_offset))
             y_offset += 15
 
 # ==============================================================================
