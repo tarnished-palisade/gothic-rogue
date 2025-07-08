@@ -218,7 +218,7 @@ class OptionsMenu:
         self.buttons = []
         self.selected_index = 0
 
-    def rebuild_buttons(self, game_state):
+    def rebuild_buttons(self, game_state: GameState):
         """Clears and rebuilds the button list based on the current game state."""
         self.buttons.clear()
         y_offset = 200  # Starting Y position for buttons
@@ -250,6 +250,12 @@ class OptionsMenu:
             # The back button now returns to the root options menu.
             back_y = y_offset + len(resolutions) * 50
             self.buttons.append(Button(back_y, "Back", self.button_font, GameState.OPTIONS_ROOT))
+
+        else:
+            # This menu does not handle other states. By adding this `else`,
+            # we explicitly tell the linter we have considered all other
+            # possibilities from the GameState enum.
+            pass
 
         self.selected_index = 0
         self.buttons[self.selected_index].is_selected = True
@@ -880,6 +886,7 @@ class Game:
 
                             # We must rebuild the buttons here as well, so the UI
                             # can update to show which resolution is selected.
+                            # noinspection PyTypeChecker
                             self.options_menu.rebuild_buttons(self.game_state)
 
                         elif action_type == "toggle_fps":
@@ -892,6 +899,7 @@ class Game:
                             settings_manager.save_settings()
 
                             # 3. Rebuild the buttons to instantly reflect the change (e.g., "ON" to "OFF").
+                            # noinspection PyTypeChecker
                             self.options_menu.rebuild_buttons(self.game_state)
 
             elif self.game_state == GameState.PLAYER_TURN:
