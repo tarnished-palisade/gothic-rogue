@@ -24,9 +24,15 @@ class SettingsManager:
         """Loads settings from the JSON file, or returns defaults."""
         if os.path.exists(self.filepath):
             with open(self.filepath, 'r') as f:
-                return json.load(f)
+                # Make sure to load existing settings and add new ones if they are missing
+                settings = json.load(f)
+                if 'show_fps' not in settings:
+                    settings['show_fps'] = False
+                return settings
+        # This is the default configuration for a first-time launch.
         return {
-            "resolution_index": 0
+            "resolution_index": 0,
+            "show_fps": False # Default to off.
         }
 
     def save_settings(self):
@@ -49,7 +55,7 @@ settings_manager = SettingsManager()
 
 # --- Display Settings ---
 # A list of all available screen resolutions for the player to choose from.
-resolutions = [(800, 600), (1024, 768), (1200, 900), (1600, 1200), (1920, 1080)]
+resolutions = [(800, 600), (1024, 768), (1280, 960), (1600, 1200), (2048, 1536)]
 
 # Load the player's previously saved resolution choice.
 current_resolution_index = settings_manager.get("resolution_index")
@@ -116,7 +122,8 @@ class GameState(Enum):
     """
     QUIT = auto()  # State to signal the application should close.
     MAIN_MENU = auto()  # State for when the main menu is displayed.
-    OPTIONS_MENU = auto()  # State for when the options menu is displayed.
+    OPTIONS_ROOT = auto()  # The main options menu (with categories).
+    OPTIONS_VIDEO = auto()  # The sub-menu for screen resolution settings.
     PLAYER_DEAD = auto()  # A new state for when the player has died.
 
     # The original GAME_RUNNING state has been replaced by a more granular
@@ -154,7 +161,7 @@ class Menu:
 
         self.buttons = [
             Button(250, "Start Game", self.button_font, GameState.PLAYER_TURN),
-            Button(310, "Options", self.button_font, GameState.OPTIONS_MENU),
+            Button(310, "Options", self.button_font, GameState.OPTIONS_ROOT),
             Button(370, "Quit", self.button_font, GameState.QUIT)
         ]
         self.selected_index = 0
@@ -194,29 +201,61 @@ class Menu:
         for button in self.buttons:
             button.draw(surface)
 
+
 class OptionsMenu:
-    """Manages the options screen for changing settings like resolution."""
+    """
+    Manages all options screens, acting as a state-driven UI system.
+    - Necessity: To provide an organized, nested structure for game settings
+                 instead of a single, cluttered list.
+    - Function: Displays different buttons and titles based on the current
+                game state (e.g., OPTIONS_ROOT vs. OPTIONS_VIDEO).
+    - Effect: A clean, intuitive, and scalable multiscreen options menu.
+    """
 
     def __init__(self):
         self.title_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 40)
         self.button_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 28)
-
         self.buttons = []
-        for i, (w, h) in enumerate(resolutions):
-            action = {"type": "resolution", "index": i}
-            button = Button(200 + i * 50, f"{w} x {h}", self.button_font, action)
-            self.buttons.append(button)
+        self.selected_index = 0
 
-        self.buttons.append(Button(200 + len(resolutions) * 50, "Back", self.button_font, {"type": "back"}))
+    def rebuild_buttons(self, game_state):
+        """Clears and rebuilds the button list based on the current game state."""
+        self.buttons.clear()
+        y_offset = 200  # Starting Y position for buttons
+
+        if game_state == GameState.OPTIONS_ROOT:
+            # --- Main Options Categories ---
+            self.buttons.append(Button(y_offset, "Video Settings", self.button_font, GameState.OPTIONS_VIDEO))
+
+            # This is the FPS toggle from our previous work.
+            show_fps = settings_manager.get("show_fps")
+            fps_text = f"FPS Counter: {'ON' if show_fps else 'OFF'}"
+            self.buttons.append(Button(y_offset + 60, fps_text, self.button_font, {"type": "toggle_fps"}))
+
+            # The back button now returns to the main menu.
+            self.buttons.append(Button(y_offset + 120, "Back", self.button_font, GameState.MAIN_MENU))
+
+        elif game_state == GameState.OPTIONS_VIDEO:
+
+            # --- Video Settings Sub-Menu ---
+            for i, (w, h) in enumerate(resolutions):
+                action = {"type": "resolution", "index": i}
+                button_text = f"{w} x {h}"
+                # Add an indicator to the currently selected resolution.
+                if i == current_resolution_index:
+                    button_text += " <"
+                button = Button(y_offset + i * 50, button_text, self.button_font, action)
+                self.buttons.append(button)
+
+            # The back button now returns to the root options menu.
+            back_y = y_offset + len(resolutions) * 50
+            self.buttons.append(Button(back_y, "Back", self.button_font, GameState.OPTIONS_ROOT))
 
         self.selected_index = 0
         self.buttons[self.selected_index].is_selected = True
 
-    def update(self, delta_time):
-        pass  # No dynamic elements in the options menu yet.
-
     def handle_input(self, event):
-        """Processes keyboard input for menu navigation."""
+        """Processes keyboard input for menu navigation and actions."""
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_UP or event.key == pygame.K_w:
                 self.buttons[self.selected_index].is_selected = False
@@ -230,9 +269,14 @@ class OptionsMenu:
                 return self.buttons[self.selected_index].action
         return None
 
-    def draw(self, surface):
-        """Draws all elements of the options menu."""
-        title_surface = self.title_font.render("Screen Resolution", True, COLOR_WHITE)
+    def draw(self, surface, game_state):
+        """Draws the options menu, with a title that changes based on the state."""
+        # --- Dynamic Title ---
+        title_text = "Options"
+        if game_state == GameState.OPTIONS_VIDEO:
+            title_text = "Screen Resolution"
+
+        title_surface = self.title_font.render(title_text, True, COLOR_WHITE)
         title_rect = title_surface.get_rect(center=(INTERNAL_WIDTH / 2, 100))
         surface.blit(title_surface, title_rect)
 
@@ -306,6 +350,9 @@ class AIComponent(Component):
         distance_to_player = abs(pos.x - player_pos.x) + abs(pos.y - player_pos.y)
 
         if distance_to_player <= self.sight_radius:
+            # If the player is seen for the first time, transition to ACTIVE state.
+            if self.state == 'IDLE':
+                turn_manager.game.set_combat_state(True)  # Signal combat start
             self.state = 'ACTIVE'
             self.turns_since_player_seen = 0
         else:
@@ -650,17 +697,30 @@ class TurnManager:
             self.kill_entity(defender)
 
     def kill_entity(self, entity):
-        """Removes a dead entity from the game."""
+        """Removes a dead entity from the game and checks if combat has ended."""
         char = entity.get_component(RenderComponent).char
         self.game.hud.add_message(f"The {char} is slain!", COLOR_MESSAGE_DEFAULT)
 
-        # If the player died, end the game.
         if entity is self.player:
             self.game.game_state = GameState.PLAYER_DEAD
         else:
             # Remove the entity from all tracked lists.
             self.game.entities.remove(entity)
             self.turn_takers.remove(entity)
+
+            # --- Check if Combat is Over ---
+            # After killing an enemy, check if any remaining enemies are still active.
+            is_any_enemy_active = False
+            for e in self.turn_takers:
+                if e is self.player: continue
+                ai = e.get_component(AIComponent)
+                if ai and ai.state == 'ACTIVE':
+                    is_any_enemy_active = True
+                    break  # Found an active enemy, no need to check further.
+
+            # If no active enemies are left, turn off combat mode.
+            if not is_any_enemy_active:
+                self.game.set_combat_state(False)
 
 # ==============================================================================
 # VIII. Main Game Class
@@ -670,26 +730,39 @@ class Game:
     """The main class that orchestrates the entire game."""
 
     def __init__(self):
+        # Initialize all Pygame modules.
         pygame.init()
+        # Create the main window and the internal rendering surface.
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         self.internal_surface = pygame.Surface((INTERNAL_WIDTH, INTERNAL_HEIGHT))
 
         pygame.display.set_caption("Untitled Gothic Horror Roguelike")
         self.clock = pygame.time.Clock()
-        self.game_state = GameState.MAIN_MENU
+        # In class Game, method __init__
+        self.game_state: GameState = GameState.MAIN_MENU
 
-        self.menus = {
-            GameState.MAIN_MENU: Menu(),
-            GameState.OPTIONS_MENU: OptionsMenu()
-        }
+        # --- Menu Initialization ---
+        # We now have dedicated instances for each main menu screen.
+        self.main_menu = Menu()
+        self.options_menu = OptionsMenu()
+        # Give the options menu a reference back to the main game object.
+        # This allows it to know the current game state to rebuild its buttons.
+        self.options_menu.game = self
+
+        # --- Font Initialization ---
         self.game_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 16)
         self.death_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 60)
-        self.camera = Camera(INTERNAL_WIDTH, INTERNAL_HEIGHT)
 
+        # --- System Initialization ---
+        self.camera = Camera(INTERNAL_WIDTH, INTERNAL_HEIGHT)
+        self.hud = HUD(self.game_font)
+        self.fps_counter = FPSCounter(self.game_font)
+        self.debug_overlay = DebugOverlay()
+
+        # --- Entity and Map Creation ---
         map_width, map_height = 100, 100
         self.game_map = Map(map_width, map_height)
 
-        # --- Entity Creation ---
         self.player = Entity()
         spawn_x, spawn_y = self.game_map.spawn_point
         self.player.add_component(PositionComponent(spawn_x, spawn_y))
@@ -704,19 +777,13 @@ class Game:
             if self.game_map.is_walkable(rat_x, rat_y) and (rat_x, rat_y) != (spawn_x, spawn_y):
                 rat.add_component(PositionComponent(rat_x, rat_y))
                 break
-
         rat.add_component(RenderComponent('r', COLOR_ENTITY_WHITE))
         rat.add_component(TurnTakerComponent())
         rat.add_component(AIComponent())
         rat.add_component(StatsComponent(hp=2, power=1, speed=1))
 
         self.entities = [self.player, rat]
-
-        # --- System Initialization ---
-        # The TurnManager now gets a reference to the whole Game object for better context.
         self.turn_manager = TurnManager(game_object=self)
-        self.hud = HUD(self.game_font)
-        self.debug_overlay = DebugOverlay()
 
         # --- Fast Movement System Attributes ---
         self.fast_move_intent = {'dx': 0, 'dy': 0}
@@ -727,6 +794,7 @@ class Game:
     def run(self):
         """The main game loop. Continues until the game state is QUIT."""
         while self.game_state != GameState.QUIT:
+            # Get the time elapsed since the last frame, in seconds.
             delta_time = self.clock.tick(60) / 1000.0
             self.handle_events()
             self.update(delta_time)
@@ -743,22 +811,23 @@ class Game:
         settings_manager.set("resolution_index", index)
         settings_manager.save_settings()
 
+    def set_combat_state(self, is_fighting):
+        """Sets the game's combat state, enabling or disabling fast movement."""
+        self.is_in_combat = is_fighting
+
     def handle_events(self):
         """Processes all pending events from Pygame, like input."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.game_state = GameState.QUIT
                 return
-
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_F12:
                     self.debug_overlay.toggle()
-
-                # If the player is dead, any key press quits the game.
                 if self.game_state == GameState.PLAYER_DEAD:
                     self.game_state = GameState.QUIT
                     return
-
+                # Input for fast movement intent
                 if event.key == pygame.K_UP or event.key == pygame.K_w:
                     self.fast_move_intent['dy'] = -1
                 elif event.key == pygame.K_DOWN or event.key == pygame.K_s:
@@ -767,8 +836,8 @@ class Game:
                     self.fast_move_intent['dx'] = -1
                 elif event.key == pygame.K_RIGHT or event.key == pygame.K_d:
                     self.fast_move_intent['dx'] = 1
-
             if event.type == pygame.KEYUP:
+                # Clear fast movement intent
                 if (event.key == pygame.K_UP or event.key == pygame.K_w) and self.fast_move_intent['dy'] == -1:
                     self.fast_move_intent['dy'] = 0
                 elif (event.key == pygame.K_DOWN or event.key == pygame.K_s) and self.fast_move_intent['dy'] == 1:
@@ -778,16 +847,52 @@ class Game:
                 elif (event.key == pygame.K_RIGHT or event.key == pygame.K_d) and self.fast_move_intent['dx'] == 1:
                     self.fast_move_intent['dx'] = 0
 
-            if self.game_state in self.menus:
-                action = self.menus[self.game_state].handle_input(event)
+            # --- State-Based Input Handling ---
+            # The logic is now separated by the game's current state.
+            if self.game_state == GameState.MAIN_MENU:
+                action = self.main_menu.handle_input(event)
+                if action:
+                    self.game_state = action
+                    # If we are entering the options menu, we must
+                    # build its buttons for the initial root state.
+                    if action == GameState.OPTIONS_ROOT:
+                        self.options_menu.rebuild_buttons(action)
+
+
+
+
+            elif self.game_state in [GameState.OPTIONS_ROOT, GameState.OPTIONS_VIDEO]:
+                action = self.options_menu.handle_input(event)
                 if action:
                     if isinstance(action, GameState):
+                        # First, set the new game state
                         self.game_state = action
+                        # CRITICAL FIX: Only rebuild the options menu if the NEW state
+                        # is actually an options menu state.
+                        if self.game_state in [GameState.OPTIONS_ROOT, GameState.OPTIONS_VIDEO]:
+                            self.options_menu.rebuild_buttons(self.game_state)
+
+                    # If the action is a dictionary, it's a command to perform a task.
                     elif isinstance(action, dict):
-                        if action["type"] == "resolution":
+                        action_type = action.get("type")
+                        if action_type == "resolution":
                             self.change_resolution(action["index"])
-                        elif action["type"] == "back":
-                            self.game_state = GameState.MAIN_MENU
+
+                            # We must rebuild the buttons here as well, so the UI
+                            # can update to show which resolution is selected.
+                            self.options_menu.rebuild_buttons(self.game_state)
+
+                        elif action_type == "toggle_fps":
+
+                            # 1. Get the current setting's value.
+                            current_setting = settings_manager.get("show_fps")
+
+                            # 2. Set the value to its opposite and save it.
+                            settings_manager.set("show_fps", not current_setting)
+                            settings_manager.save_settings()
+
+                            # 3. Rebuild the buttons to instantly reflect the change (e.g., "ON" to "OFF").
+                            self.options_menu.rebuild_buttons(self.game_state)
 
             elif self.game_state == GameState.PLAYER_TURN:
                 if event.type == pygame.KEYDOWN:
@@ -806,9 +911,11 @@ class Game:
 
     def update(self, delta_time):
         """Updates the game's state. Called once per frame."""
-        if self.game_state in self.menus:
-            self.menus[self.game_state].update(delta_time)
+        # Only update the main menu animations if it's the active state.
+        if self.game_state == GameState.MAIN_MENU:
+            self.main_menu.update(delta_time)
 
+        # Handle fast movement logic only when it's the player's turn and not in combat.
         if not self.is_in_combat and self.game_state == GameState.PLAYER_TURN:
             move_intent = (self.fast_move_intent['dx'] != 0 or self.fast_move_intent['dy'] != 0)
             if move_intent:
@@ -818,26 +925,30 @@ class Game:
                     if self.turn_manager.process_player_turn(self.fast_move_intent['dx'], self.fast_move_intent['dy']):
                         self.game_state = GameState.ENEMY_TURN
 
+        # Handle enemy turns.
         if self.game_state == GameState.ENEMY_TURN:
             self.turn_manager.process_enemy_turns()
             if self.game_state != GameState.PLAYER_DEAD:
                 self.game_state = GameState.PLAYER_TURN
 
     def draw(self):
-        """Draws everything to the screen."""
-        if self.game_state in [GameState.PLAYER_TURN, GameState.ENEMY_TURN, GameState.PLAYER_DEAD]:
-            self.camera.update(self.player)
-
+        """Draws everything to the screen, based on the current game state."""
         self.internal_surface.fill(COLOR_NEAR_BLACK)
 
-        if self.game_state in self.menus:
-            self.menus[self.game_state].draw(self.internal_surface)
+        # --- State-Based Drawing Logic ---
+        if self.game_state == GameState.MAIN_MENU:
+            self.main_menu.draw(self.internal_surface)
+
+        elif self.game_state in [GameState.OPTIONS_ROOT, GameState.OPTIONS_VIDEO]:
+            # The options menu needs to know the current state to draw the correct title.
+            self.options_menu.draw(self.internal_surface, self.game_state)
 
         elif self.game_state in [GameState.PLAYER_TURN, GameState.ENEMY_TURN, GameState.PLAYER_DEAD]:
+            self.camera.update(self.player)
+            # Draw the game world, entities, and HUD.
             map_bg_rect = pygame.Rect(0, 0, self.game_map.width * TILE_SIZE, self.game_map.height * TILE_SIZE)
             visible_bg_rect = self.camera.apply(map_bg_rect)
             pygame.draw.rect(self.internal_surface, COLOR_MEDIUM_BROWN, visible_bg_rect)
-
             for y, row in enumerate(self.game_map.tiles):
                 for x, tile_char in enumerate(row):
                     tile_rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
@@ -846,8 +957,6 @@ class Game:
                         color = self.game_map.tile_colors.get(tile_char, COLOR_WHITE)
                         text_surface = self.game_font.render(tile_char, True, color)
                         self.internal_surface.blit(text_surface, visible_rect)
-
-            # Render all entities through the camera.
             for entity in self.entities:
                 pos = entity.get_component(PositionComponent)
                 render = entity.get_component(RenderComponent)
@@ -857,27 +966,25 @@ class Game:
                     text_surface = self.game_font.render(render.char, True, render.color)
                     text_draw_rect = text_surface.get_rect(center=visible_rect.center)
                     self.internal_surface.blit(text_surface, text_draw_rect)
-
-            # --- Draw HUD ---
-            # This new line calls our HUD's draw method each frame.
             self.hud.draw(self.internal_surface, self.player)
 
+        # Draw the FPS counter in ANY state, if enabled. This makes it always visible.
+        if settings_manager.get("show_fps"):
+            self.fps_counter.draw(self.internal_surface, self.clock)
+
+        # If the player is dead, draw the death message over everything else.
         if self.game_state == GameState.PLAYER_DEAD:
             death_text = self.death_font.render("YOU DIED", True, COLOR_BLOOD_RED)
             text_rect = death_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2))
             self.internal_surface.blit(death_text, text_rect)
 
-        player_stats = self.player.get_component(StatsComponent)
-        debug_data = {
-            "FPS": f"{self.clock.get_fps():.1f}",
-            "State": self.game_state.name,
-            "Player HP": f"{player_stats.current_hp}/{player_stats.max_hp}" if player_stats else "N/A"
-        }
-        self.debug_overlay.draw(self.internal_surface, debug_data)
+        # Always draw the debug overlay if it's enabled.
+        self.debug_overlay.draw(self.internal_surface,
+                                {"FPS": f"{self.clock.get_fps():.1f}", "State": self.game_state.name})
 
+        # Final scaling and screen update.
         scaled_surface = pygame.transform.scale(self.internal_surface, (SCREEN_WIDTH, SCREEN_HEIGHT))
         self.screen.blit(scaled_surface, (0, 0))
-
         pygame.display.flip()
 
 # ==============================================================================
@@ -996,7 +1103,7 @@ class DebugOverlay:
         if not self.enabled: return
 
         # Start the Y-position near the top.
-        y_offset = 10
+        y_offset = 30 # Move down to not overlap with the new FPS counter
 
         # Define a right-side margin.
         margin = 10
@@ -1010,6 +1117,25 @@ class DebugOverlay:
 
             surface.blit(text_surface, (x_pos, y_offset))
             y_offset += 15
+
+class FPSCounter:
+    """A simple, player-facing class to display the current FPS."""
+
+    def __init__(self, font):
+        self.font = font
+
+    def draw(self, surface, clock):
+        """Draws the FPS counter to the top-right of the surface."""
+        # Get the FPS from the game's clock and format it.
+        fps_text = f"FPS: {clock.get_fps():.1f}"
+        text_surface = self.font.render(fps_text, True, COLOR_WHITE)
+
+        # Calculate position for the top-right corner.
+        margin = 10
+        x_pos = INTERNAL_WIDTH - text_surface.get_width() - margin
+        y_pos = 10
+
+        surface.blit(text_surface, (x_pos, y_pos))
 
 # ==============================================================================
 # XI. Entry Point
