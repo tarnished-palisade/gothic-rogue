@@ -201,7 +201,6 @@ class Menu:
         for button in self.buttons:
             button.draw(surface)
 
-
 class OptionsMenu:
     """
     Manages all options screens, acting as a state-driven UI system.
@@ -765,6 +764,33 @@ class Game:
         self.fps_counter = FPSCounter(self.game_font)
         self.debug_overlay = DebugOverlay()
 
+        # --- Game Over Fade Effect Attributes ---
+        self.death_fade_surface = pygame.Surface((INTERNAL_WIDTH, INTERNAL_HEIGHT))
+        self.death_fade_surface.fill(COLOR_NEAR_BLACK)
+        self.death_fade_alpha = 0
+        self.death_fade_speed = 85  # Controls how fast the screen fades (higher is faster)
+
+        # --- Fast Movement System Attributes ---
+        self.fast_move_intent = {'dx': 0, 'dy': 0}
+        self.fast_move_timer = 0.0
+        self.FAST_MOVE_INTERVAL = 0.1
+        self.is_in_combat = False
+
+        # --- Pre-declare Game World Attributes ---
+        # We define these here with default values so the linter knows they will
+        # always exist on a Game instance. The setup_new_game() method will
+        # then populate them with their actual game-start values.
+        self.game_map = None
+        self.player = None
+        self.entities = []
+        self.turn_manager = None
+
+        # Call the setup method to initialize the first game state.
+        self.setup_new_game()
+
+    def setup_new_game(self):
+        """Resets the game world for a new session by creating a new map,
+                player, and entities."""
         # --- Entity and Map Creation ---
         map_width, map_height = 100, 100
         self.game_map = Map(map_width, map_height)
@@ -791,12 +817,6 @@ class Game:
         self.entities = [self.player, rat]
         self.turn_manager = TurnManager(game_object=self)
 
-        # --- Fast Movement System Attributes ---
-        self.fast_move_intent = {'dx': 0, 'dy': 0}
-        self.fast_move_timer = 0.0
-        self.FAST_MOVE_INTERVAL = 0.1
-        self.is_in_combat = False
-
     def run(self):
         """The main game loop. Continues until the game state is QUIT."""
         while self.game_state != GameState.QUIT:
@@ -822,122 +842,192 @@ class Game:
         self.is_in_combat = is_fighting
 
     def handle_events(self):
-        """Processes all pending events from Pygame, like input."""
+        """
+        Processes all pending events from Pygame's event queue.
+
+        This method acts as the central hub for all user input. It is structured
+        as a state machine, where the logic applied depends entirely on the current
+        value of `self.game_state`. This ensures that input is only processed
+        in the correct context (e.g., movement keys only work during the player's
+        turn, menu navigation only works in menus).
+
+        The method iterates through each event provided by Pygame and routes it
+        to the appropriate logic block.
+        """
         for event in pygame.event.get():
+            # ------------------------------------------------------------------
+            # I. Global Event Handling
+            # These events are checked first as they are the highest priority
+            # and can occur regardless of the current game state.
+            # ------------------------------------------------------------------
+
+            # The user clicked the window's close button. This is an explicit
+            # signal to terminate the application immediately.
             if event.type == pygame.QUIT:
                 self.game_state = GameState.QUIT
-                return
+                return  # Exit the method immediately to stop further processing.
+
+            # A key was pressed. We check for global hotkeys here.
             if event.type == pygame.KEYDOWN:
+                # The F12 key toggles the developer debug overlay. This is a
+                # tool for us and should always be available.
                 if event.key == pygame.K_F12:
                     self.debug_overlay.toggle()
-                if self.game_state == GameState.PLAYER_DEAD:
-                    self.game_state = GameState.QUIT
-                    return
-                # Input for fast movement intent
-                if event.key == pygame.K_UP or event.key == pygame.K_w:
-                    self.fast_move_intent['dy'] = -1
-                elif event.key == pygame.K_DOWN or event.key == pygame.K_s:
-                    self.fast_move_intent['dy'] = 1
-                elif event.key == pygame.K_LEFT or event.key == pygame.K_a:
-                    self.fast_move_intent['dx'] = -1
-                elif event.key == pygame.K_RIGHT or event.key == pygame.K_d:
-                    self.fast_move_intent['dx'] = 1
-            if event.type == pygame.KEYUP:
-                # Clear fast movement intent
-                if (event.key == pygame.K_UP or event.key == pygame.K_w) and self.fast_move_intent['dy'] == -1:
-                    self.fast_move_intent['dy'] = 0
-                elif (event.key == pygame.K_DOWN or event.key == pygame.K_s) and self.fast_move_intent['dy'] == 1:
-                    self.fast_move_intent['dy'] = 0
-                elif (event.key == pygame.K_LEFT or event.key == pygame.K_a) and self.fast_move_intent['dx'] == -1:
-                    self.fast_move_intent['dx'] = 0
-                elif (event.key == pygame.K_RIGHT or event.key == pygame.K_d) and self.fast_move_intent['dx'] == 1:
-                    self.fast_move_intent['dx'] = 0
 
-            # --- State-Based Input Handling ---
-            # The logic is now separated by the game's current state.
-            if self.game_state == GameState.MAIN_MENU:
+            # ------------------------------------------------------------------
+            # II. State-Based Event Handling
+            # This is the core of the state machine. An if/elif chain directs
+            # the event to the logic block corresponding to the current game state.
+            # ------------------------------------------------------------------
+
+            if self.game_state == GameState.PLAYER_DEAD:
+                # CONTEXT: The player has died.
+                # GOAL: Wait for the player to acknowledge their demise and
+                #       return to the main menu.
+                # We only listen for a single input: the Enter key.
+                # This input is only accepted *after* the fade-to-black
+                # animation has fully completed.
+                if self.death_fade_alpha >= 255 and event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_RETURN:
+                        # Reset the game world for a fresh start.
+                        self.setup_new_game()
+                        # Transition back to the main menu.
+                        self.game_state = GameState.MAIN_MENU
+
+            elif self.game_state == GameState.MAIN_MENU:
+                # CONTEXT: The player is at the main title screen.
+                # GOAL: Let the Menu object handle navigation and return an action.
                 action = self.main_menu.handle_input(event)
                 if action:
+                    # An action was returned (e.g., "Start Game" or "Options").
+                    # If the player chose to start, we must set up a new game world.
+                    if action == GameState.PLAYER_TURN:
+                        self.setup_new_game()
+
+                    # Transition to the new state returned by the menu.
                     self.game_state = action
-                    # If we are entering the options menu, we must
-                    # build its buttons for the initial root state.
-                    if action == GameState.OPTIONS_ROOT:
-                        self.options_menu.rebuild_buttons(action)
-
-
-
+                    # If the new state is the options menu, we must build its buttons.
+                    if self.game_state == GameState.OPTIONS_ROOT:
+                        self.options_menu.rebuild_buttons(self.game_state)
 
             elif self.game_state in [GameState.OPTIONS_ROOT, GameState.OPTIONS_VIDEO]:
+                # CONTEXT: The player is in one of the options sub-menus.
+                # GOAL: Let the OptionsMenu object handle navigation and return an action.
                 action = self.options_menu.handle_input(event)
                 if action:
+                    # The action can be either a state change or a command.
                     if isinstance(action, GameState):
-                        # First, set the new game state
+                        # The action is a state change (e.g., going "Back" or
+                        # entering a sub-menu).
                         self.game_state = action
-                        # CRITICAL FIX: Only rebuild the options menu if the NEW state
-                        # is actually an options menu state.
+                        # We must rebuild the menu to show the correct buttons
+                        # for the new options screen.
                         if self.game_state in [GameState.OPTIONS_ROOT, GameState.OPTIONS_VIDEO]:
                             self.options_menu.rebuild_buttons(self.game_state)
-
-                    # If the action is a dictionary, it's a command to perform a task.
                     elif isinstance(action, dict):
+                        # The action is a command (e.g., "change_resolution").
                         action_type = action.get("type")
                         if action_type == "resolution":
                             self.change_resolution(action["index"])
-
-                            # We must rebuild the buttons here as well, so the UI
-                            # can update to show which resolution is selected.
                             # noinspection PyTypeChecker
                             self.options_menu.rebuild_buttons(self.game_state)
-
                         elif action_type == "toggle_fps":
-
-                            # 1. Get the current setting's value.
                             current_setting = settings_manager.get("show_fps")
-
-                            # 2. Set the value to its opposite and save it.
                             settings_manager.set("show_fps", not current_setting)
                             settings_manager.save_settings()
-
-                            # 3. Rebuild the buttons to instantly reflect the change (e.g., "ON" to "OFF").
                             # noinspection PyTypeChecker
                             self.options_menu.rebuild_buttons(self.game_state)
 
             elif self.game_state == GameState.PLAYER_TURN:
+                # CONTEXT: It is the player's turn to act in the game world.
+                # GOAL: Process movement input.
+
+                # This section handles key presses and releases to determine the
+                # player's *intent* for continuous, fast movement.
+                if event.type == pygame.KEYDOWN:
+                    if event.key in (pygame.K_UP, pygame.K_w):
+                        self.fast_move_intent['dy'] = -1
+                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        self.fast_move_intent['dy'] = 1
+                    elif event.key in (pygame.K_LEFT, pygame.K_a):
+                        self.fast_move_intent['dx'] = -1
+                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                        self.fast_move_intent['dx'] = 1
+                elif event.type == pygame.KEYUP:
+                    if event.key in (pygame.K_UP, pygame.K_w):
+                        self.fast_move_intent['dy'] = 0
+                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        self.fast_move_intent['dy'] = 0
+                    elif event.key in (pygame.K_LEFT, pygame.K_a):
+                        self.fast_move_intent['dx'] = 0
+                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                        self.fast_move_intent['dx'] = 0
+
+                # This section handles a single key press for a discrete, turn-based action.
+                # This logic now runs regardless of combat state, allowing the player to always act on their turn.
                 if event.type == pygame.KEYDOWN:
                     dx, dy = 0, 0
-                    if event.key == pygame.K_UP or event.key == pygame.K_w:
+                    if event.key in (pygame.K_UP, pygame.K_w):
                         dy = -1
-                    elif event.key == pygame.K_DOWN or event.key == pygame.K_s:
+                    elif event.key in (pygame.K_DOWN, pygame.K_s):
                         dy = 1
-                    elif event.key == pygame.K_LEFT or event.key == pygame.K_a:
+                    elif event.key in (pygame.K_LEFT, pygame.K_a):
                         dx = -1
-                    elif event.key == pygame.K_RIGHT or event.key == pygame.K_d:
+                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
                         dx = 1
+
                     if dx != 0 or dy != 0:
+                        # If a valid move was made, process it and end the player's turn.
                         if self.turn_manager.process_player_turn(dx, dy):
                             self.game_state = GameState.ENEMY_TURN
+                            # Add a small delay before fast movement can kick in again.
+                            self.fast_move_timer = -0.2
 
     def update(self, delta_time):
-        """Updates the game's state. Called once per frame."""
-        # Only update the main menu animations if it's the active state.
+        """
+        Updates the game's state. Called once per frame.
+        The logic is structured as a state machine, ensuring only the code for
+        the current game state is executed.
+        """
+        # This is a clean if/elif chain, making the state transitions mutually exclusive.
         if self.game_state == GameState.MAIN_MENU:
             self.main_menu.update(delta_time)
 
-        # Handle fast movement logic only when it's the player's turn and not in combat.
-        if not self.is_in_combat and self.game_state == GameState.PLAYER_TURN:
-            move_intent = (self.fast_move_intent['dx'] != 0 or self.fast_move_intent['dy'] != 0)
-            if move_intent:
-                self.fast_move_timer += delta_time
-                if self.fast_move_timer >= self.FAST_MOVE_INTERVAL:
-                    self.fast_move_timer = 0.0
-                    if self.turn_manager.process_player_turn(self.fast_move_intent['dx'], self.fast_move_intent['dy']):
-                        self.game_state = GameState.ENEMY_TURN
+        elif self.game_state == GameState.PLAYER_TURN:
+            # Fast movement logic is only active when not in combat.
+            if not self.is_in_combat:
+                keys = pygame.key.get_pressed()
+                dx, dy = 0, 0
+                # By explicitly casting the key state to a boolean, we provide a clear
+                # type hint that resolves the linter's confusion with Pygame.
+                if bool(keys[pygame.K_UP]) or bool(keys[pygame.K_w]):
+                    dy = -1
+                elif bool(keys[pygame.K_DOWN]) or bool(keys[pygame.K_s]):
+                    dy = 1
+                elif bool(keys[pygame.K_LEFT]) or bool(keys[pygame.K_a]):
+                    dx = -1
+                elif bool(keys[pygame.K_RIGHT]) or bool(keys[pygame.K_d]):
+                    dx = 1
 
-        # Handle enemy turns.
-        if self.game_state == GameState.ENEMY_TURN:
+                if dx != 0 or dy != 0:
+                    self.fast_move_timer += delta_time
+                    if self.fast_move_timer >= self.FAST_MOVE_INTERVAL:
+                        self.fast_move_timer = 0.0
+                        if self.turn_manager.process_player_turn(dx, dy):
+                            self.game_state = GameState.ENEMY_TURN
+
+        elif self.game_state == GameState.ENEMY_TURN:
             self.turn_manager.process_enemy_turns()
+            # If the player died during the enemy turn, the state will now be
+            # PLAYER_DEAD. Otherwise, it's now the player's turn.
             if self.game_state != GameState.PLAYER_DEAD:
                 self.game_state = GameState.PLAYER_TURN
+
+        elif self.game_state == GameState.PLAYER_DEAD:
+            # If the player is dead, we only update the fade-to-black animation.
+            self.death_fade_alpha += self.death_fade_speed * delta_time
+            if self.death_fade_alpha > 255:
+                self.death_fade_alpha = 255
 
     def draw(self):
         """Draws everything to the screen, based on the current game state."""
@@ -982,9 +1072,21 @@ class Game:
 
         # If the player is dead, draw the death message over everything else.
         if self.game_state == GameState.PLAYER_DEAD:
-            death_text = self.death_font.render("YOU DIED", True, COLOR_BLOOD_RED)
-            text_rect = death_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2))
-            self.internal_surface.blit(death_text, text_rect)
+            # Set the transparency of our fade surface based on the current alpha.
+            self.death_fade_surface.set_alpha(int(self.death_fade_alpha))
+            # Draw the semi-transparent black surface over the whole screen.
+            self.internal_surface.blit(self.death_fade_surface, (0, 0))
+
+            # Only draw the death text and restart prompt after the screen is mostly faded.
+            if self.death_fade_alpha > 200:
+                death_text = self.death_font.render("YOU DIED", True, COLOR_BLOOD_RED)
+                text_rect = death_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 - 30))
+                self.internal_surface.blit(death_text, text_rect)
+
+                restart_font = self.options_menu.button_font
+                restart_text = restart_font.render("Press Enter to Return to the Menu", True, COLOR_WHITE)
+                restart_rect = restart_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 + 40))
+                self.internal_surface.blit(restart_text, restart_rect)
 
         # Always draw the debug overlay if it's enabled.
         self.debug_overlay.draw(self.internal_surface,
