@@ -98,6 +98,9 @@ COLOR_HUD_EMPTY_DASH = (50, 50, 50) # Color for depleted health dashes
 # --- New HUD Configuration ---
 HUD_HEALTH_BAR_DASHES = 20 # The total number of dashes in the health bar
 
+# --- Item Colors ---
+COLOR_HEALING_RED = (255, 0, 100) # A vibrant red for potions.
+
 # --- New Message Log Configuration ---
 HUD_MESSAGE_COUNT = 5 # The maximum number of messages to display at once.
 # Add some default colors for different message types for future use.
@@ -293,7 +296,27 @@ class OptionsMenu:
             button.draw(surface)
 
 # ==============================================================================
-# V. Entity-Component System (ECS) (Principle: Modularity)
+# V. Item Functions
+# These are standalone functions that define the effects of usable items.
+# ==============================================================================
+
+def heal(**kwargs):
+    """Heals an entity by a given amount."""
+    entity = kwargs.get("entity")
+    amount = kwargs.get("amount")
+
+    if not entity or not amount:
+        return
+
+    stats = entity.get_component(StatsComponent)
+    if stats:
+        stats.current_hp += amount
+        # Prevent overhealing.
+        if stats.current_hp > stats.max_hp:
+            stats.current_hp = stats.max_hp
+
+# ==============================================================================
+# VI. Entity-Component System (ECS) (Principle: Modularity)
 # ==============================================================================
 
 class Component:
@@ -438,6 +461,24 @@ class StatsComponent(Component):
         self.power = power
         self.speed = speed
 
+class InventoryComponent(Component):
+    """Holds a list of entities that are considered items in an inventory."""
+    def __init__(self):
+        super().__init__()
+        self.items = []
+
+class ItemComponent(Component):
+    """
+    A component for entities that can be picked up and used.
+    - use_function: The function to call when the item is used.
+    - kwargs: A dictionary of arguments to pass to the use function.
+    """
+    def __init__(self, use_function=None, **kwargs):
+        super().__init__()
+        self.use_function = use_function
+        # Store any additional data the use_function might need.
+        self.kwargs = kwargs
+
 class Entity:
     """A generic container for components. Represents any object in the game."""
 
@@ -454,7 +495,7 @@ class Entity:
         return self.components.get(component_type)
 
 # ==============================================================================
-# VI. Game World (Principle: Scalability)
+# VII. Game World (Principle: Scalability)
 # ==============================================================================
 
 class ProceduralCaveGenerator:
@@ -625,7 +666,7 @@ class Camera:
         self.rect = pygame.Rect(x, y, self.width, self.height)
 
 # ==============================================================================
-# VII. Turn-Based System (Principle: Logical, Modular)
+# VIII. Turn-Based System (Principle: Logical, Modular)
 # ==============================================================================
 
 class TurnManager:
@@ -664,17 +705,34 @@ class TurnManager:
 
         next_x, next_y = pos.x + dx, pos.y + dy
 
+        # Check if the destination is a wall.
         if not self.game_map.is_walkable(next_x, next_y):
             return False
 
+        # Check for an entity at the destination.
         target_entity = self.get_entity_at_location(next_x, next_y)
         if target_entity:
-            self.process_attack(self.player, target_entity)
-            return True
+            # --- NEW: Item Pickup Logic ---
+            # If the target entity is an item, pick it up.
+            if target_entity.get_component(ItemComponent):
+                # Add the item to the player's inventory.
+                inventory = self.player.get_component(InventoryComponent)
+                inventory.items.append(target_entity)
+                # Remove the item from the main entity list so it's no longer on the map.
+                self.game.entities.remove(target_entity)
+                self.game.hud.add_message("You pick up a potion!", (255, 180, 255)) # A light purple color
+                # Picking up an item does not take a turn.
+                return False # Return False to indicate no turn was spent.
 
+            # If the target is not an item, it must be an enemy. Attack it.
+            else:
+                self.process_attack(self.player, target_entity)
+                return True # Attacking takes a turn.
+
+        # If there's no entity at the destination, move there.
         pos.x = next_x
         pos.y = next_y
-        return True
+        return True # Moving takes a turn.
 
     def process_enemy_turns(self):
         """Processes turns for all non-player entities."""
@@ -746,7 +804,7 @@ class TurnManager:
                 self.game.set_combat_state(False)
 
 # ==============================================================================
-# VIII. Main Game Class
+# IX. Main Game Class
 # ==============================================================================
 
 class Game:
@@ -819,6 +877,7 @@ class Game:
         self.player.add_component(RenderComponent('@', COLOR_ENTITY_WHITE))
         self.player.add_component(TurnTakerComponent())
         self.player.add_component(StatsComponent(hp=30, power=5, speed=1))
+        self.player.add_component(InventoryComponent())  # Give the player a bag for items.
 
         # Initialize the entity list with only the player.
         self.entities = [self.player]
@@ -885,6 +944,27 @@ class Game:
             skeleton.add_component(AIComponent())
             skeleton.add_component(StatsComponent(hp=5, power=1, speed=2))
             self.entities.append(skeleton)
+
+        # --- Spawn Health Potions ---
+        for _ in range(5):  # Spawn 5 health potions
+            potion = Entity()
+            while True:
+                # Find a random valid spawn location.
+                pot_x = random.randint(1, map_width - 2)
+                pot_y = random.randint(1, map_height - 2)
+                # Ensure the spot is walkable and not already occupied.
+                if self.game_map.is_walkable(pot_x, pot_y) and not any(
+                        e.get_component(PositionComponent).x == pot_x and e.get_component(
+                                PositionComponent).y == pot_y for e in self.entities):
+                    potion.add_component(PositionComponent(pot_x, pot_y))
+                    break
+
+            # Assemble the potion entity.
+            potion.add_component(RenderComponent('!', COLOR_HEALING_RED))
+            # Attach the ItemComponent, linking the potion to the heal function.
+            potion.add_component(ItemComponent(use_function=heal, amount=15))
+            # For now, this makes it appear on the map.
+            self.entities.append(potion)
 
         self.turn_manager = TurnManager(game_object=self)
 
@@ -1034,6 +1114,26 @@ class Game:
                     elif event.key in (pygame.K_RIGHT, pygame.K_d):
                         self.fast_move_intent['dx'] = 0
 
+                        # --- NEW: Use Item Logic ---
+                        # Check if the player wants to use an item.
+                        if event.type == pygame.KEYDOWN and event.key == pygame.K_h:
+                            inventory = self.player.get_component(InventoryComponent)
+                            # Check if the inventory is not empty.
+                            if inventory.items:
+                                # Get the first item from the inventory.
+                                item_to_use = inventory.items.pop(0)
+                                item_component = item_to_use.get_component(ItemComponent)
+                                # Check if the item has a use function.
+                                if item_component and item_component.use_function:
+                                    # Call the item's function, passing the player as the target entity.
+                                    item_component.use_function(entity=self.player, **item_component.kwargs)
+                                    self.hud.add_message("You drink a potion and feel better.",
+                                                         (100, 255, 100))  # Heal green
+                                    # Using an item takes a turn.
+                                    self.game_state = GameState.ENEMY_TURN
+                            else:
+                                self.hud.add_message("You have no potions to use.", (255, 255, 100))  # Yellow warning
+
                 # This section handles a single key press for a discrete, turn-based action.
                 # This logic now runs regardless of combat state, allowing the player to always act on their turn.
                 if event.type == pygame.KEYDOWN:
@@ -1071,6 +1171,7 @@ class Game:
                 dx, dy = 0, 0
                 # By explicitly casting the key state to a boolean, we provide a clear
                 # type hint that resolves the linter's confusion with Pygame.
+                # noinspection PyUnresolvedReferences
                 if bool(keys[pygame.K_UP]) or bool(keys[pygame.K_w]):
                     dy = -1
                 elif bool(keys[pygame.K_DOWN]) or bool(keys[pygame.K_s]):
@@ -1169,7 +1270,7 @@ class Game:
         pygame.display.flip()
 
 # ==============================================================================
-# IX. Heads-Up Display (HUD) System
+# X. Heads-Up Display (HUD) System
 # ==============================================================================
 
 class HUD:
@@ -1203,6 +1304,7 @@ class HUD:
         """Draws all HUD elements onto the provided surface."""
         self.draw_health_bar(surface, player)
         self.draw_message_log(surface)
+        self.draw_potion_status(surface, player)
 
     def draw_health_bar(self, surface, player):
         """Calculates and draws the player's health bar."""
@@ -1258,8 +1360,24 @@ class HUD:
             surface.blit(text_surface, (x, y))
             y += self.font.get_height() + 2
 
+    def draw_potion_status(self, surface, player):
+        """Draws the number of health potions the player is carrying."""
+        inventory = player.get_component(InventoryComponent)
+        if not inventory: return
+
+        # For now, we assume all items are potions. We can make this more
+        # specific later if we add other item types.
+        potion_count = len(inventory.items)
+
+        if potion_count > 0:
+            # Display the count in the bottom-left corner of the screen.
+            text = f"Potions: {potion_count}"
+            text_surface = self.font.render(text, True, COLOR_HEALING_RED)
+            # Position it 10 pixels from the left and 10 pixels from the bottom.
+            surface.blit(text_surface, (10, INTERNAL_HEIGHT - self.font.get_height() - 10))
+
 # ==============================================================================
-# X. Development Tools
+# XI. Development Tools
 # ==============================================================================
 
 class DebugOverlay:
@@ -1319,7 +1437,7 @@ class FPSCounter:
         surface.blit(text_surface, (x_pos, y_pos))
 
 # ==============================================================================
-# XI. Entry Point
+# XII. Entry Point
 # ==============================================================================
 
 if __name__ == "__main__":
