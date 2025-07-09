@@ -86,6 +86,7 @@ COLOR_ENTITY_WHITE = (255, 255, 255)  # A general color for entities like the pl
 
 # --- New Enemy Color Palette ---
 COLOR_CORPSE_PALE = (170, 180, 150) # A sickly green for ghouls.
+COLOR_BONE_WHITE = (220, 220, 200) # An off-white for skeletons.
 
 # --- New HUD Color Palette ---
 COLOR_HEALTH_GREEN = (0, 255, 0) # Safe health
@@ -677,14 +678,28 @@ class TurnManager:
 
     def process_enemy_turns(self):
         """Processes turns for all non-player entities."""
-        # We iterate over a copy of the list, as entities might be removed during their turn.
+        # We iterate over a copy of the list, as entities might be removed.
         for entity in list(self.turn_takers):
+            # Skip the player or any entity that might have been killed this turn.
             if entity is self.player or entity not in self.entities:
                 continue
 
-            ai = entity.get_component(AIComponent)
-            if ai:
-                ai.take_turn(self, self.player)
+            # --- NEW: Speed Mechanic Implementation ---
+            # Get the entity's stats to check its speed.
+            stats = entity.get_component(StatsComponent)
+            speed = stats.speed if stats else 1 # Default to 1 if no stats.
+
+            # Loop a number of times equal to the entity's speed.
+            for _ in range(speed):
+                # If the entity was killed by the player during its multi-move
+                # (e.g., from a future "attack of opportunity" mechanic),
+                # it should not get its remaining actions.
+                if entity not in self.entities:
+                    break
+
+                ai = entity.get_component(AIComponent)
+                if ai:
+                    ai.take_turn(self, self.player)
 
     def process_attack(self, attacker, defender):
         """Handles the logic for one entity attacking another."""
@@ -848,6 +863,28 @@ class Game:
             ghoul.add_component(AIComponent())  # Uses the same AI logic as the rat for now.
             ghoul.add_component(StatsComponent(hp=10, power=2, speed=1))
             self.entities.append(ghoul)
+
+        # --- Spawn Skeletons ---
+        # Skeletons are fast but fragile. They often appear in groups.
+        for _ in range(4):  # Spawn 4 Skeletons
+            skeleton = Entity()
+            while True:
+                # Find a random valid spawn location.
+                skel_x = random.randint(1, map_width - 2)
+                skel_y = random.randint(1, map_height - 2)
+                # Ensure the spot is walkable and not already occupied.
+                if self.game_map.is_walkable(skel_x, skel_y) and not any(
+                        e.get_component(PositionComponent).x == skel_x and e.get_component(
+                                PositionComponent).y == skel_y for e in self.entities):
+                    skeleton.add_component(PositionComponent(skel_x, skel_y))
+                    break
+
+            # Assemble the Skeleton with its unique stats, including speed=2.
+            skeleton.add_component(RenderComponent('s', COLOR_BONE_WHITE))
+            skeleton.add_component(TurnTakerComponent())
+            skeleton.add_component(AIComponent())
+            skeleton.add_component(StatsComponent(hp=5, power=1, speed=2))
+            self.entities.append(skeleton)
 
         self.turn_manager = TurnManager(game_object=self)
 
