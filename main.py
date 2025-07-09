@@ -84,6 +84,9 @@ COLOR_DARK_GREY = (90, 90, 90)  # The color of the floor character ('.').
 COLOR_DARKER_BROWN = (80, 70, 60)  # The color of rubble or debris (',').
 COLOR_ENTITY_WHITE = (255, 255, 255)  # A general color for entities like the player and rats.
 
+# --- New Enemy Color Palette ---
+COLOR_CORPSE_PALE = (170, 180, 150) # A sickly green for ghouls.
+
 # --- New HUD Color Palette ---
 COLOR_HEALTH_GREEN = (0, 255, 0) # Safe health
 COLOR_HEALTH_YELLOW = (255, 255, 0) # Caution health
@@ -802,19 +805,50 @@ class Game:
         self.player.add_component(TurnTakerComponent())
         self.player.add_component(StatsComponent(hp=30, power=5, speed=1))
 
-        rat = Entity()
-        while True:
-            rat_x = random.randint(1, map_width - 2)
-            rat_y = random.randint(1, map_height - 2)
-            if self.game_map.is_walkable(rat_x, rat_y) and (rat_x, rat_y) != (spawn_x, spawn_y):
-                rat.add_component(PositionComponent(rat_x, rat_y))
-                break
-        rat.add_component(RenderComponent('r', COLOR_ENTITY_WHITE))
-        rat.add_component(TurnTakerComponent())
-        rat.add_component(AIComponent())
-        rat.add_component(StatsComponent(hp=2, power=1, speed=1))
+        # Initialize the entity list with only the player.
+        self.entities = [self.player]
 
-        self.entities = [self.player, rat]
+        # --- Spawn Rats ---
+        # We now loop to create rats, making it easy to change the number.
+        for _ in range(10):  # Spawn 10 rats
+            rat = Entity()
+            while True:
+                rat_x, rat_y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
+                # Ensure the spot is walkable and not already occupied by the player or another entity.
+                if self.game_map.is_walkable(rat_x, rat_y) and not any(
+                        e.get_component(PositionComponent).x == rat_x and e.get_component(PositionComponent).y == rat_y
+                        for e in self.entities):
+                    rat.add_component(PositionComponent(rat_x, rat_y))
+                    break
+
+            rat.add_component(RenderComponent('r', COLOR_ENTITY_WHITE))
+            rat.add_component(TurnTakerComponent())
+            rat.add_component(AIComponent())
+            rat.add_component(StatsComponent(hp=2, power=1, speed=1))
+            self.entities.append(rat)
+
+        # --- Spawn Ghouls ---
+        # Ghouls are more dangerous, so we will spawn fewer of them.
+        for _ in range(3):  # Spawn 3 Ghouls
+            ghoul = Entity()
+            while True:
+                # Find a random valid spawn location.
+                ghoul_x = random.randint(1, map_width - 2)
+                ghoul_y = random.randint(1, map_height - 2)
+                # Ensure the spot is walkable and not already occupied.
+                if self.game_map.is_walkable(ghoul_x, ghoul_y) and not any(
+                        e.get_component(PositionComponent).x == ghoul_x and e.get_component(
+                                PositionComponent).y == ghoul_y for e in self.entities):
+                    ghoul.add_component(PositionComponent(ghoul_x, ghoul_y))
+                    break
+
+            # Assemble the Ghoul using our predefined components and stats.
+            ghoul.add_component(RenderComponent('g', COLOR_CORPSE_PALE))
+            ghoul.add_component(TurnTakerComponent())
+            ghoul.add_component(AIComponent())  # Uses the same AI logic as the rat for now.
+            ghoul.add_component(StatsComponent(hp=10, power=2, speed=1))
+            self.entities.append(ghoul)
+
         self.turn_manager = TurnManager(game_object=self)
 
     def run(self):
