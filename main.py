@@ -721,8 +721,7 @@ class TurnManager:
                 # Remove the item from the main entity list so it's no longer on the map.
                 self.game.entities.remove(target_entity)
                 self.game.hud.add_message("You pick up a potion!", (255, 180, 255)) # A light purple color
-                # Picking up an item does not take a turn.
-                return False # Return False to indicate no turn was spent.
+                return True # Picking up an item by moving onto it takes a turn.
 
             # If the target is not an item, it must be an enemy. Attack it.
             else:
@@ -1052,8 +1051,10 @@ class Game:
                 if action:
                     # An action was returned (e.g., "Start Game" or "Options").
                     # If the player chose to start, we must set up a new game world.
-                    if action == GameState.PLAYER_TURN:
-                        self.setup_new_game()
+                    if action == GameState.PLAYER_TURN: self.setup_new_game()
+                    self.game_state = action
+                    if self.game_state == GameState.OPTIONS_ROOT: self.options_menu.rebuild_buttons(self.game_state)
+
 
                     # Transition to the new state returned by the menu.
                     self.game_state = action
@@ -1090,69 +1091,42 @@ class Game:
                             self.options_menu.rebuild_buttons(self.game_state)
 
             elif self.game_state == GameState.PLAYER_TURN:
-                # CONTEXT: It is the player's turn to act in the game world.
-                # GOAL: Process movement input.
-
-                # This section handles key presses and releases to determine the
-                # player's *intent* for continuous, fast movement.
+                # This is the single, unified handler for all player actions.
                 if event.type == pygame.KEYDOWN:
-                    if event.key in (pygame.K_UP, pygame.K_w):
-                        self.fast_move_intent['dy'] = -1
-                    elif event.key in (pygame.K_DOWN, pygame.K_s):
-                        self.fast_move_intent['dy'] = 1
-                    elif event.key in (pygame.K_LEFT, pygame.K_a):
-                        self.fast_move_intent['dx'] = -1
-                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
-                        self.fast_move_intent['dx'] = 1
-                elif event.type == pygame.KEYUP:
-                    if event.key in (pygame.K_UP, pygame.K_w):
-                        self.fast_move_intent['dy'] = 0
-                    elif event.key in (pygame.K_DOWN, pygame.K_s):
-                        self.fast_move_intent['dy'] = 0
-                    elif event.key in (pygame.K_LEFT, pygame.K_a):
-                        self.fast_move_intent['dx'] = 0
-                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
-                        self.fast_move_intent['dx'] = 0
+                    action_taken = False
 
-                        # --- NEW: Use Item Logic ---
-                        # Check if the player wants to use an item.
-                        if event.type == pygame.KEYDOWN and event.key == pygame.K_h:
-                            inventory = self.player.get_component(InventoryComponent)
-                            # Check if the inventory is not empty.
-                            if inventory.items:
-                                # Get the first item from the inventory.
-                                item_to_use = inventory.items.pop(0)
-                                item_component = item_to_use.get_component(ItemComponent)
-                                # Check if the item has a use function.
-                                if item_component and item_component.use_function:
-                                    # Call the item's function, passing the player as the target entity.
-                                    item_component.use_function(entity=self.player, **item_component.kwargs)
-                                    self.hud.add_message("You drink a potion and feel better.",
-                                                         (100, 255, 100))  # Heal green
-                                    # Using an item takes a turn.
-                                    self.game_state = GameState.ENEMY_TURN
-                            else:
-                                self.hud.add_message("You have no potions to use.", (255, 255, 100))  # Yellow warning
+                    # --- Action: Use Health Potion ---
+                    if event.key == pygame.K_h:
+                        inventory = self.player.get_component(InventoryComponent)
+                        if inventory and inventory.items:
+                            item_to_use = inventory.items.pop(0)
+                            item_component = item_to_use.get_component(ItemComponent)
+                            if item_component and item_component.use_function:
+                                item_component.use_function(entity=self.player, **item_component.kwargs)
+                                self.hud.add_message("You drink a potion and feel better.", COLOR_HEALING_RED)
+                                action_taken = True
+                        else:
+                            self.hud.add_message("You have no potions to use.", (255, 255, 100))
 
-                # This section handles a single key press for a discrete, turn-based action.
-                # This logic now runs regardless of combat state, allowing the player to always act on their turn.
-                if event.type == pygame.KEYDOWN:
-                    dx, dy = 0, 0
-                    if event.key in (pygame.K_UP, pygame.K_w):
-                        dy = -1
-                    elif event.key in (pygame.K_DOWN, pygame.K_s):
-                        dy = 1
-                    elif event.key in (pygame.K_LEFT, pygame.K_a):
-                        dx = -1
-                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
-                        dx = 1
+                    # --- Action: Movement ---
+                    else:
+                        dx, dy = 0, 0
+                        if event.key in (pygame.K_UP, pygame.K_w):
+                            dy = -1
+                        elif event.key in (pygame.K_DOWN, pygame.K_s):
+                            dy = 1
+                        elif event.key in (pygame.K_LEFT, pygame.K_a):
+                            dx = -1
+                        elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                            dx = 1
 
-                    if dx != 0 or dy != 0:
-                        # If a valid move was made, process it and end the player's turn.
-                        if self.turn_manager.process_player_turn(dx, dy):
-                            self.game_state = GameState.ENEMY_TURN
-                            # Add a small delay before fast movement can kick in again.
-                            self.fast_move_timer = -0.2
+                        if dx != 0 or dy != 0:
+                            if self.turn_manager.process_player_turn(dx, dy):
+                                action_taken = True
+
+                    # If any valid action resulted in a turn being taken, end the player's turn.
+                    if action_taken:
+                        self.game_state = GameState.ENEMY_TURN
 
     def update(self, delta_time):
         """
