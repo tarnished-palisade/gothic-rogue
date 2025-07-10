@@ -100,6 +100,7 @@ HUD_HEALTH_BAR_DASHES = 20 # The total number of dashes in the health bar
 
 # --- Item Colors ---
 COLOR_HEALING_RED = (255, 0, 100) # A vibrant red for potions.
+COLOR_SCROLL_BLUE = (100, 100, 255) # A magical blue for scrolls.
 
 # --- New Message Log Configuration ---
 HUD_MESSAGE_COUNT = 5 # The maximum number of messages to display at once.
@@ -315,6 +316,38 @@ def heal(**kwargs):
         if stats.current_hp > stats.max_hp:
             stats.current_hp = stats.max_hp
 
+def teleport(**kwargs):
+    """Finds a random, valid, unoccupied tile and moves the entity there."""
+    entity = kwargs.get("entity")
+    game_map = kwargs.get("game_map")
+    entities = kwargs.get("entities")
+
+    # Defensive check to ensure all necessary data is present.
+    if not entity or not game_map or not entities:
+        return
+
+    # 1. Create a list of all possible floor tiles on the map.
+    possible_locations = []
+    for y, row in enumerate(game_map.tiles):
+        for x, tile in enumerate(row):
+            if tile != '#':  # Any tile that is not a wall is a potential destination.
+                possible_locations.append((x, y))
+
+    # 2. Shuffle the list to ensure the destination is random.
+    random.shuffle(possible_locations)
+
+    # 3. Find the first valid, unoccupied tile from the shuffled list.
+    for loc in possible_locations:
+        x, y = loc
+        # Check if any other entity is already at this location.
+        if not any(e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y for e in entities if e is not entity):
+            # Found a safe spot. Move the entity.
+            pos = entity.get_component(PositionComponent)
+            if pos:
+                pos.x = x
+                pos.y = y
+            return  # Exit the function after successfully teleporting.
+
 # ==============================================================================
 # VI. Entity-Component System (ECS) (Principle: Modularity)
 # ==============================================================================
@@ -473,8 +506,9 @@ class ItemComponent(Component):
     - use_function: The function to call when the item is used.
     - kwargs: A dictionary of arguments to pass to the use function.
     """
-    def __init__(self, use_function=None, **kwargs):
+    def __init__(self, name, use_function=None, **kwargs):
         super().__init__()
+        self.name = name
         self.use_function = use_function
         # Store any additional data the use_function might need.
         self.kwargs = kwargs
@@ -961,9 +995,32 @@ class Game:
             # Assemble the potion entity.
             potion.add_component(RenderComponent('!', COLOR_HEALING_RED))
             # Attach the ItemComponent, linking the potion to the heal function.
-            potion.add_component(ItemComponent(use_function=heal, amount=15))
+            # Attach the ItemComponent, giving the potion its name and function.
+            potion.add_component(ItemComponent(name="Health Potion", use_function=heal, amount=15))
             # For now, this makes it appear on the map.
             self.entities.append(potion)
+
+        # --- Spawn Teleportation Scrolls ---
+        # These are powerful, so they should be rare.
+        for _ in range(2):  # Spawn 2 scrolls
+            scroll = Entity()
+            while True:
+                # Find a random valid spawn location.
+                scroll_x = random.randint(1, map_width - 2)
+                scroll_y = random.randint(1, map_height - 2)
+                # Ensure the spot is walkable and not already occupied.
+                if self.game_map.is_walkable(scroll_x, scroll_y) and not any(
+                        e.get_component(PositionComponent).x == scroll_x and e.get_component(
+                                PositionComponent).y == scroll_y for e in self.entities):
+                    scroll.add_component(PositionComponent(scroll_x, scroll_y))
+                    break
+
+            # Assemble the scroll entity with its unique properties.
+            scroll.add_component(RenderComponent('?', COLOR_SCROLL_BLUE))
+            scroll.add_component(
+                ItemComponent(name="Scroll of Teleportation", use_function=teleport, game_map=self.game_map,
+                                  entities=self.entities))
+            self.entities.append(scroll)
 
         self.turn_manager = TurnManager(game_object=self)
 
@@ -1051,10 +1108,8 @@ class Game:
                 if action:
                     # An action was returned (e.g., "Start Game" or "Options").
                     # If the player chose to start, we must set up a new game world.
-                    if action == GameState.PLAYER_TURN: self.setup_new_game()
-                    self.game_state = action
-                    if self.game_state == GameState.OPTIONS_ROOT: self.options_menu.rebuild_buttons(self.game_state)
-
+                    if action == GameState.PLAYER_TURN:
+                        self.setup_new_game()
 
                     # Transition to the new state returned by the menu.
                     self.game_state = action
@@ -1091,7 +1146,8 @@ class Game:
                             self.options_menu.rebuild_buttons(self.game_state)
 
             elif self.game_state == GameState.PLAYER_TURN:
-                # This is the single, unified handler for all player actions.
+                # CONTEXT: It is the player's turn to act.
+                # GOAL: Process a single, discrete action from a key press.
                 if event.type == pygame.KEYDOWN:
                     action_taken = False
 
@@ -1099,14 +1155,40 @@ class Game:
                     if event.key == pygame.K_h:
                         inventory = self.player.get_component(InventoryComponent)
                         if inventory and inventory.items:
-                            item_to_use = inventory.items.pop(0)
-                            item_component = item_to_use.get_component(ItemComponent)
-                            if item_component and item_component.use_function:
-                                item_component.use_function(entity=self.player, **item_component.kwargs)
-                                self.hud.add_message("You drink a potion and feel better.", COLOR_HEALING_RED)
-                                action_taken = True
+                            # Find the first health potion in the inventory.
+                            potion_to_use = next((item for item in inventory.items if
+                                                  item.get_component(ItemComponent).name == "Health Potion"), None)
+                            if potion_to_use:
+                                inventory.items.remove(potion_to_use)
+                                item_component = potion_to_use.get_component(ItemComponent)
+                                if item_component.use_function:
+                                    item_component.use_function(entity=self.player, **item_component.kwargs)
+                                    self.hud.add_message("You drink a potion and feel better.", COLOR_HEALING_RED)
+                                    action_taken = True
+                            else:
+                                self.hud.add_message("You have no potions to use.", (255, 255, 100))
                         else:
                             self.hud.add_message("You have no potions to use.", (255, 255, 100))
+
+                    # --- Action: Read Scroll ---
+                    elif event.key == pygame.K_r:
+                        inventory = self.player.get_component(InventoryComponent)
+                        if inventory and inventory.items:
+                            # Find a scroll in the inventory.
+                            scroll_to_use = next((item for item in inventory.items if
+                                                  item.get_component(ItemComponent).name == "Scroll of Teleportation"),
+                                                 None)
+                            if scroll_to_use:
+                                inventory.items.remove(scroll_to_use)
+                                item_component = scroll_to_use.get_component(ItemComponent)
+                                if item_component.use_function:
+                                    item_component.use_function(entity=self.player, **item_component.kwargs)
+                                    self.hud.add_message("You read the scroll and vanish!", COLOR_SCROLL_BLUE)
+                                    action_taken = True
+                            else:
+                                self.hud.add_message("You have no scrolls to read.", (255, 255, 100))
+                        else:
+                            self.hud.add_message("You have no scrolls to read.", (255, 255, 100))
 
                     # --- Action: Movement ---
                     else:
@@ -1119,7 +1201,6 @@ class Game:
                             dx = -1
                         elif event.key in (pygame.K_RIGHT, pygame.K_d):
                             dx = 1
-
                         if dx != 0 or dy != 0:
                             if self.turn_manager.process_player_turn(dx, dy):
                                 action_taken = True
@@ -1278,7 +1359,7 @@ class HUD:
         """Draws all HUD elements onto the provided surface."""
         self.draw_health_bar(surface, player)
         self.draw_message_log(surface)
-        self.draw_potion_status(surface, player)
+        self.draw_item_status(surface, player)
 
     def draw_health_bar(self, surface, player):
         """Calculates and draws the player's health bar."""
@@ -1334,21 +1415,32 @@ class HUD:
             surface.blit(text_surface, (x, y))
             y += self.font.get_height() + 2
 
-    def draw_potion_status(self, surface, player):
-        """Draws the number of health potions the player is carrying."""
+    def draw_item_status(self, surface, player):
+        """Draws the count of all named items in the player's inventory."""
         inventory = player.get_component(InventoryComponent)
         if not inventory: return
 
-        # For now, we assume all items are potions. We can make this more
-        # specific later if we add other item types.
-        potion_count = len(inventory.items)
+        item_counts = {}
+        # Count the occurrences of each named item.
+        for item in inventory.items:
+            item_name = item.get_component(ItemComponent).name
+            item_counts[item_name] = item_counts.get(item_name, 0) + 1
 
-        if potion_count > 0:
-            # Display the count in the bottom-left corner of the screen.
-            text = f"Potions: {potion_count}"
-            text_surface = self.font.render(text, True, COLOR_HEALING_RED)
-            # Position it 10 pixels from the left and 10 pixels from the bottom.
-            surface.blit(text_surface, (10, INTERNAL_HEIGHT - self.font.get_height() - 10))
+        # Define the display order and colors for items.
+        display_items = {
+            "Health Potion": COLOR_HEALING_RED,
+            "Scroll of Teleportation": COLOR_SCROLL_BLUE
+        }
+
+        y_offset = INTERNAL_HEIGHT - self.font.get_height() - 10
+        for item_name, color in display_items.items():
+            count = item_counts.get(item_name, 0)
+            if count > 0:
+                text = f"{item_name}s: {count}"
+                text_surface = self.font.render(text, True, color)
+                surface.blit(text_surface, (10, y_offset))
+                # Move the next item's text up.
+                y_offset -= self.font.get_height() + 5
 
 # ==============================================================================
 # XI. Development Tools
