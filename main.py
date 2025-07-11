@@ -513,6 +513,11 @@ class ItemComponent(Component):
         # Store any additional data the use_function might need.
         self.kwargs = kwargs
 
+class StairsComponent(Component):
+    """A marker component for an entity that acts as stairs to the next level."""
+    def __init__(self):
+        super().__init__()
+
 class Entity:
     """A generic container for components. Represents any object in the game."""
 
@@ -700,8 +705,46 @@ class Camera:
         self.rect = pygame.Rect(x, y, self.width, self.height)
 
 # ==============================================================================
-# VIII. Turn-Based System (Principle: Logical, Modular)
+# VIII. Dungeon and Turn Management (Principle: Cohesion)
 # ==============================================================================
+
+class DungeonManager:
+    """Manages dungeon levels, progression, and difficulty scaling."""
+
+    def __init__(self, game_instance):
+        """Initializes the DungeonManager with a reference to the main Game object."""
+        self.game = game_instance
+        self.dungeon_level = 1
+
+    def next_level(self):
+        """Transitions the game to the next dungeon level."""
+        self.dungeon_level += 1
+        self.game.hud.add_message(f"You descend to level {self.dungeon_level}...", (200, 100, 255))
+        # This will call the method we refactored in Step 1.
+        self.game.generate_new_level()
+
+    def get_entity_spawn_counts(self):
+        """
+        Calculates the number of enemies and items to spawn based on the current dungeon level.
+        - Necessity: To create a scalable difficulty curve, making deeper levels more challenging.
+        - Function: Returns a dictionary with the calculated counts for each entity type.
+        - Effect: The game's challenge increases organically as the player progresses.
+        """
+        num_rats = 10 + (self.dungeon_level * 2)
+        num_ghouls = 3 + self.dungeon_level
+        num_skeletons = 4 + int(self.dungeon_level / 2)
+        num_potions = 5 - int(self.dungeon_level / 2)
+
+        # Ensure potions don't disappear completely on very deep levels.
+        if num_potions < 1:
+            num_potions = 1
+
+        return {
+            "rat": num_rats,
+            "ghoul": num_ghouls,
+            "skeleton": num_skeletons,
+            "potion": num_potions
+        }
 
 class TurnManager:
     """
@@ -746,21 +789,21 @@ class TurnManager:
         # Check for an entity at the destination.
         target_entity = self.get_entity_at_location(next_x, next_y)
         if target_entity:
-            # --- NEW: Item Pickup Logic ---
-            # If the target entity is an item, pick it up.
-            if target_entity.get_component(ItemComponent):
-                # Add the item to the player's inventory.
+            # First, check if the entity is stairs. If so, do nothing here,
+            # which will allow the movement code below to execute.
+            if target_entity.get_component(StairsComponent):
+                pass
+            # Next, check if the entity is an item to be picked up.
+            elif target_entity.get_component(ItemComponent):
                 inventory = self.player.get_component(InventoryComponent)
                 inventory.items.append(target_entity)
-                # Remove the item from the main entity list so it's no longer on the map.
                 self.game.entities.remove(target_entity)
-                self.game.hud.add_message("You pick up a potion!", (255, 180, 255)) # A light purple color
-                return True # Picking up an item by moving onto it takes a turn.
-
-            # If the target is not an item, it must be an enemy. Attack it.
+                self.game.hud.add_message("You pick up a potion!", (255, 180, 255))
+                return True  # Picking up an item takes a turn.
+            # Otherwise, the entity must be an enemy to attack.
             else:
                 self.process_attack(self.player, target_entity)
-                return True # Attacking takes a turn.
+                return True  # Attacking takes a turn.
 
         # If there's no entity at the destination, move there.
         pos.x = next_x
@@ -893,135 +936,115 @@ class Game:
         self.player = None
         self.entities = []
         self.turn_manager = None
+        self.dungeon_manager = None
 
         # Call the setup method to initialize the first game state.
         self.setup_new_game()
 
     def setup_new_game(self):
-        """Resets the game world for a new session by creating a new map,
-                player, and entities."""
-        # --- Entity and Map Creation ---
-        map_width, map_height = 100, 100
-        self.game_map = Map(map_width, map_height)
-
+        """Initializes the game for a new run, creating the player and the first level."""
+        # --- Player Entity Creation (Happens only once per game) ---
         self.player = Entity()
-        spawn_x, spawn_y = self.game_map.spawn_point
-        self.player.add_component(PositionComponent(spawn_x, spawn_y))
+        # The initial position doesn't matter, as generate_new_level will place the player.
+        self.player.add_component(PositionComponent(0, 0))
         self.player.add_component(RenderComponent('@', COLOR_ENTITY_WHITE))
         self.player.add_component(TurnTakerComponent())
         self.player.add_component(StatsComponent(hp=30, power=5, speed=1))
-        self.player.add_component(InventoryComponent())  # Give the player a bag for items.
+        self.player.add_component(InventoryComponent())
 
-        # Initialize the entity list with only the player.
+        # --- Initialize Core Game Systems ---
+        self.dungeon_manager = DungeonManager(self)
+
+        # --- Generate the First Level ---
+        # This will create the map, place the player, spawn entities, and create the turn manager.
+        self.generate_new_level()
+
+    def generate_new_level(self):
+        """Creates a new map, places the player, and spawns entities based on dungeon level."""
+        # --- Get Dynamic Spawn Counts from Manager ---
+        spawn_counts = self.dungeon_manager.get_entity_spawn_counts()
+
+        # --- Map and Entity List Initialization ---
+        map_width, map_height = 100, 100
+        self.game_map = Map(map_width, map_height)
+
+        # Place the player at the new level's spawn point.
+        spawn_x, spawn_y = self.game_map.spawn_point
+        player_pos = self.player.get_component(PositionComponent)
+        player_pos.x = spawn_x
+        player_pos.y = spawn_y
+
+        # Reset entity list with only the player.
         self.entities = [self.player]
 
-        # --- Spawn Rats ---
-        # We now loop to create rats, making it easy to change the number.
-        for _ in range(10):  # Spawn 10 rats
-            rat = Entity()
-            while True:
-                rat_x, rat_y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
-                # Ensure the spot is walkable and not already occupied by the player or another entity.
-                if self.game_map.is_walkable(rat_x, rat_y) and not any(
-                        e.get_component(PositionComponent).x == rat_x and e.get_component(PositionComponent).y == rat_y
-                        for e in self.entities):
-                    rat.add_component(PositionComponent(rat_x, rat_y))
-                    break
+        # --- Spawn Entities Based on Counts ---
+        entity_data = {
+            "rat": (spawn_counts["rat"], 'r', COLOR_ENTITY_WHITE, StatsComponent(hp=2, power=1, speed=1)),
+            "ghoul": (spawn_counts["ghoul"], 'g', COLOR_CORPSE_PALE, StatsComponent(hp=10, power=2, speed=1)),
+            "skeleton": (spawn_counts["skeleton"], 's', COLOR_BONE_WHITE, StatsComponent(hp=5, power=1, speed=2))
+        }
 
-            rat.add_component(RenderComponent('r', COLOR_ENTITY_WHITE))
-            rat.add_component(TurnTakerComponent())
-            rat.add_component(AIComponent())
-            rat.add_component(StatsComponent(hp=2, power=1, speed=1))
-            self.entities.append(rat)
+        for data in entity_data.values():
+            count, char, color, stats = data
+            for _ in range(count):
+                entity = Entity()
+                while True:
+                    x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
+                    if self.game_map.is_walkable(x, y) and not any(
+                            e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
+                            for e in self.entities):
+                        entity.add_component(PositionComponent(x, y))
+                        break
+                entity.add_component(RenderComponent(char, color))
+                entity.add_component(TurnTakerComponent())
+                entity.add_component(AIComponent())
+                entity.add_component(stats)
+                self.entities.append(entity)
 
-        # --- Spawn Ghouls ---
-        # Ghouls are more dangerous, so we will spawn fewer of them.
-        for _ in range(3):  # Spawn 3 Ghouls
-            ghoul = Entity()
-            while True:
-                # Find a random valid spawn location.
-                ghoul_x = random.randint(1, map_width - 2)
-                ghoul_y = random.randint(1, map_height - 2)
-                # Ensure the spot is walkable and not already occupied.
-                if self.game_map.is_walkable(ghoul_x, ghoul_y) and not any(
-                        e.get_component(PositionComponent).x == ghoul_x and e.get_component(
-                                PositionComponent).y == ghoul_y for e in self.entities):
-                    ghoul.add_component(PositionComponent(ghoul_x, ghoul_y))
-                    break
-
-            # Assemble the Ghoul using our predefined components and stats.
-            ghoul.add_component(RenderComponent('g', COLOR_CORPSE_PALE))
-            ghoul.add_component(TurnTakerComponent())
-            ghoul.add_component(AIComponent())  # Uses the same AI logic as the rat for now.
-            ghoul.add_component(StatsComponent(hp=10, power=2, speed=1))
-            self.entities.append(ghoul)
-
-        # --- Spawn Skeletons ---
-        # Skeletons are fast but fragile. They often appear in groups.
-        for _ in range(4):  # Spawn 4 Skeletons
-            skeleton = Entity()
-            while True:
-                # Find a random valid spawn location.
-                skel_x = random.randint(1, map_width - 2)
-                skel_y = random.randint(1, map_height - 2)
-                # Ensure the spot is walkable and not already occupied.
-                if self.game_map.is_walkable(skel_x, skel_y) and not any(
-                        e.get_component(PositionComponent).x == skel_x and e.get_component(
-                                PositionComponent).y == skel_y for e in self.entities):
-                    skeleton.add_component(PositionComponent(skel_x, skel_y))
-                    break
-
-            # Assemble the Skeleton with its unique stats, including speed=2.
-            skeleton.add_component(RenderComponent('s', COLOR_BONE_WHITE))
-            skeleton.add_component(TurnTakerComponent())
-            skeleton.add_component(AIComponent())
-            skeleton.add_component(StatsComponent(hp=5, power=1, speed=2))
-            self.entities.append(skeleton)
-
-        # --- Spawn Health Potions ---
-        for _ in range(5):  # Spawn 5 health potions
+        # --- Spawn Potion ---
+        for _ in range(spawn_counts["potion"]):
             potion = Entity()
             while True:
-                # Find a random valid spawn location.
-                pot_x = random.randint(1, map_width - 2)
-                pot_y = random.randint(1, map_height - 2)
-                # Ensure the spot is walkable and not already occupied.
-                if self.game_map.is_walkable(pot_x, pot_y) and not any(
-                        e.get_component(PositionComponent).x == pot_x and e.get_component(
-                                PositionComponent).y == pot_y for e in self.entities):
-                    potion.add_component(PositionComponent(pot_x, pot_y))
+                x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
+                if self.game_map.is_walkable(x, y) and not any(
+                        e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
+                        for e in self.entities):
+                    potion.add_component(PositionComponent(x, y))
                     break
-
-            # Assemble the potion entity.
             potion.add_component(RenderComponent('!', COLOR_HEALING_RED))
-            # Attach the ItemComponent, linking the potion to the heal function.
-            # Attach the ItemComponent, giving the potion its name and function.
             potion.add_component(ItemComponent(name="Health Potion", use_function=heal, amount=15))
-            # For now, this makes it appear on the map.
             self.entities.append(potion)
 
-        # --- Spawn Teleportation Scrolls ---
-        # These are powerful, so they should be rare.
-        for _ in range(2):  # Spawn 2 scrolls
+        # --- Spawn Scrolls of Teleportation ---
+        for _ in range(2):
             scroll = Entity()
             while True:
-                # Find a random valid spawn location.
-                scroll_x = random.randint(1, map_width - 2)
-                scroll_y = random.randint(1, map_height - 2)
-                # Ensure the spot is walkable and not already occupied.
-                if self.game_map.is_walkable(scroll_x, scroll_y) and not any(
-                        e.get_component(PositionComponent).x == scroll_x and e.get_component(
-                                PositionComponent).y == scroll_y for e in self.entities):
-                    scroll.add_component(PositionComponent(scroll_x, scroll_y))
+                x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
+                if self.game_map.is_walkable(x, y) and not any(
+                        e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
+                        for e in self.entities):
+                    scroll.add_component(PositionComponent(x, y))
                     break
-
-            # Assemble the scroll entity with its unique properties.
             scroll.add_component(RenderComponent('?', COLOR_SCROLL_BLUE))
             scroll.add_component(
                 ItemComponent(name="Scroll of Teleportation", use_function=teleport, game_map=self.game_map,
-                                  entities=self.entities))
+                              entities=self.entities))
             self.entities.append(scroll)
 
+        # --- Spawn Stairs Down ---
+        stairs = Entity()
+        while True:
+            # Ensure stairs are not too close to the player's spawn point for this level.
+            x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
+            distance_to_player = math.sqrt((x - spawn_x) ** 2 + (y - spawn_y) ** 2)
+            if self.game_map.is_walkable(x, y) and distance_to_player > 20:  # Must be at least 20 tiles away
+                stairs.add_component(PositionComponent(x, y))
+                break
+        stairs.add_component(RenderComponent('>', (255, 165, 0)))  # Orange color for visibility
+        stairs.add_component(StairsComponent())
+        self.entities.append(stairs)
+
+        # A turn manager for the new level's entity list.
         self.turn_manager = TurnManager(game_object=self)
 
     def run(self):
@@ -1190,6 +1213,27 @@ class Game:
                         else:
                             self.hud.add_message("You have no scrolls to read.", (255, 255, 100))
 
+                    # --- Action: Descend Stairs ---
+                    elif event.key == pygame.K_PERIOD and (pygame.key.get_mods() & pygame.KMOD_SHIFT):
+                        player_pos = self.player.get_component(PositionComponent)
+
+                        # Find if a stairs entity exists at the player's current coordinates.
+                        stairs_found = False
+                        for entity in self.entities:
+                            pos = entity.get_component(PositionComponent)
+                            # Check for an entity that is NOT the player, is at the same location, and has a StairsComponent.
+                            if entity is not self.player and pos and pos.x == player_pos.x and pos.y == player_pos.y:
+                                if entity.get_component(StairsComponent):
+                                    stairs_found = True
+                                    break  # Exit the loop once stairs are found.
+
+                        if stairs_found:
+                            self.dungeon_manager.next_level()
+                            action_taken = True  # Descending takes a turn.
+                        else:
+                            # This message provides feedback if the player hits '>' but is not on stairs.
+                            self.hud.add_message("There are no stairs here.", (255, 255, 100))
+
                     # --- Action: Movement ---
                     else:
                         dx, dy = 0, 0
@@ -1270,10 +1314,12 @@ class Game:
 
         elif self.game_state in [GameState.PLAYER_TURN, GameState.ENEMY_TURN, GameState.PLAYER_DEAD]:
             self.camera.update(self.player)
+
             # Draw the game world, entities, and HUD.
             map_bg_rect = pygame.Rect(0, 0, self.game_map.width * TILE_SIZE, self.game_map.height * TILE_SIZE)
             visible_bg_rect = self.camera.apply(map_bg_rect)
             pygame.draw.rect(self.internal_surface, COLOR_MEDIUM_BROWN, visible_bg_rect)
+
             for y, row in enumerate(self.game_map.tiles):
                 for x, tile_char in enumerate(row):
                     tile_rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
@@ -1282,16 +1328,19 @@ class Game:
                         color = self.game_map.tile_colors.get(tile_char, COLOR_WHITE)
                         text_surface = self.game_font.render(tile_char, True, color)
                         self.internal_surface.blit(text_surface, visible_rect)
+
             for entity in self.entities:
                 pos = entity.get_component(PositionComponent)
                 render = entity.get_component(RenderComponent)
+
                 if pos and render:
                     entity_rect = pygame.Rect(pos.x * TILE_SIZE, pos.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
                     visible_rect = self.camera.apply(entity_rect)
                     text_surface = self.game_font.render(render.char, True, render.color)
                     text_draw_rect = text_surface.get_rect(center=visible_rect.center)
                     self.internal_surface.blit(text_surface, text_draw_rect)
-            self.hud.draw(self.internal_surface, self.player)
+
+            self.hud.draw(self.internal_surface, self.player, self.dungeon_manager)
 
         # Draw the FPS counter in ANY state, if enabled. This makes it always visible.
         if settings_manager.get("show_fps"):
@@ -1355,11 +1404,12 @@ class HUD:
         if len(self.messages) > HUD_MESSAGE_COUNT:
             self.messages.pop()
 
-    def draw(self, surface, player):
+    def draw(self, surface, player, dungeon_manager):
         """Draws all HUD elements onto the provided surface."""
         self.draw_health_bar(surface, player)
         self.draw_message_log(surface)
         self.draw_item_status(surface, player)
+        self.draw_dungeon_level(surface, dungeon_manager)
 
     def draw_health_bar(self, surface, player):
         """Calculates and draws the player's health bar."""
@@ -1441,6 +1491,18 @@ class HUD:
                 surface.blit(text_surface, (10, y_offset))
                 # Move the next item's text up.
                 y_offset -= self.font.get_height() + 5
+
+    def draw_dungeon_level(self, surface, dungeon_manager):
+        """Draws the current dungeon level to the bottom-right of the screen."""
+        level_text = f"Level: {dungeon_manager.dungeon_level}"
+        text_surface = self.font.render(level_text, True, COLOR_WHITE)
+
+        # Position in the bottom-right corner with a margin.
+        margin = 10
+        x_pos = INTERNAL_WIDTH - text_surface.get_width() - margin
+        y_pos = INTERNAL_HEIGHT - text_surface.get_height() - margin
+
+        surface.blit(text_surface, (x_pos, y_pos))
 
 # ==============================================================================
 # XI. Development Tools
