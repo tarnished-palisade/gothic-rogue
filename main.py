@@ -84,30 +84,35 @@ COLOR_DARK_GREY = (90, 90, 90)  # The color of the floor character ('.').
 COLOR_DARKER_BROWN = (80, 70, 60)  # The color of rubble or debris (',').
 COLOR_ENTITY_WHITE = (255, 255, 255)  # A general color for entities like the player and rats.
 
-# --- New Enemy Color Palette ---
+# --- Enemy Color Palette ---
 COLOR_CORPSE_PALE = (170, 180, 150) # A sickly green for ghouls.
 COLOR_BONE_WHITE = (220, 220, 200) # An off-white for skeletons.
 
-# --- New HUD Color Palette ---
+# --- HUD Color Palette ---
 COLOR_HEALTH_GREEN = (0, 255, 0) # Safe health
 COLOR_HEALTH_YELLOW = (255, 255, 0) # Caution health
 COLOR_HEALTH_ORANGE = (255, 165, 0) # Danger health
 COLOR_HEALTH_RED = (255, 0, 0) # Critical health
 COLOR_HUD_EMPTY_DASH = (50, 50, 50) # Color for depleted health dashes
 
-# --- New HUD Configuration ---
+# --- HUD Configuration ---
 HUD_HEALTH_BAR_DASHES = 20 # The total number of dashes in the health bar
 
 # --- Item Colors ---
 COLOR_HEALING_RED = (255, 0, 100) # A vibrant red for potions.
 COLOR_SCROLL_BLUE = (100, 100, 255) # A magical blue for scrolls.
 
-# --- New Message Log Configuration ---
+# --- Message Log Configuration ---
 HUD_MESSAGE_COUNT = 5 # The maximum number of messages to display at once.
 # Add some default colors for different message types for future use.
 COLOR_MESSAGE_DEFAULT = (255, 255, 255) # White for standard messages.
 COLOR_MESSAGE_DAMAGE = (255, 100, 100) # Light red for damage messages.
 COLOR_MESSAGE_HEAL = (100, 255, 100)   # Light green for healing messages.
+
+# --- XP & Leveling ---
+COLOR_XP_BLUE = (100, 150, 255) # A vibrant blue for the experience bar.
+BASE_XP_TO_LEVEL = 100          # XP needed for the first level up.
+LEVEL_UP_FACTOR = 1.5           # The scaling exponent for leveling.
 
 # --- Font and Tile Settings ---
 # The name of the monospaced font to be used for all game text.
@@ -486,13 +491,13 @@ class StatsComponent(Component):
     - Effect: Allows the game to quantify an entity's resilience and strength,
               forming the basis for combat calculations.
     """
-
-    def __init__(self, hp, power, speed):
+    def __init__(self, hp, power, speed, xp_reward=0):
         super().__init__()
         self.max_hp = hp
         self.current_hp = hp
         self.power = power
         self.speed = speed
+        self.xp_reward = xp_reward # The amount of XP granted when slain.
 
 class InventoryComponent(Component):
     """Holds a list of entities that are considered items in an inventory."""
@@ -512,6 +517,23 @@ class ItemComponent(Component):
         self.use_function = use_function
         # Store any additional data the use_function might need.
         self.kwargs = kwargs
+
+class ExperienceComponent(Component):
+    """
+    Tracks an entity's level, experience points, and progression toward the next level.
+    - Necessity: To provide a persistent sense of character growth and reward for combat.
+    - Function: Holds all data required for the leveling system.
+    - Effect: Enables a core RPG mechanic where the player becomes stronger over time.
+    """
+    def __init__(self, base_xp=100, level_factor=1.5):
+        super().__init__()
+        self.level = 1
+        self.current_xp = 0
+        # The initial XP requirement is simply the base value.
+        self.xp_to_next_level = base_xp
+        # Store the formula's components for easy recalculation upon leveling up.
+        self.base_xp = base_xp
+        self.level_factor = level_factor
 
 class StairsComponent(Component):
     """A marker component for an entity that acts as stairs to the next level."""
@@ -854,8 +876,22 @@ class TurnManager:
             self.kill_entity(defender)
 
     def kill_entity(self, entity):
-        """Removes a dead entity from the game and checks if combat has ended."""
+        """Removes a dead entity, grants XP, and checks if combat has ended."""
         char = entity.get_component(RenderComponent).char
+
+        # --- XP Gain Logic ---
+        # Get the stats of the slain entity to find its XP reward.
+        entity_stats = entity.get_component(StatsComponent)
+        if entity_stats and entity is not self.player:
+            xp_reward = entity_stats.xp_reward
+            if xp_reward > 0:
+                # Get the player's experience component and award the XP.
+                player_exp = self.player.get_component(ExperienceComponent)
+                player_exp.current_xp += xp_reward
+                self.game.hud.add_message(f"You gain {xp_reward} experience.", (100, 150, 255))
+                # Check if this XP gain results in a level up.
+                self.game.check_player_level_up() # We will create this method next.
+
         self.game.hud.add_message(f"The {char} is slain!", COLOR_MESSAGE_DEFAULT)
 
         if entity is self.player:
@@ -863,7 +899,8 @@ class TurnManager:
         else:
             # Remove the entity from all tracked lists.
             self.game.entities.remove(entity)
-            self.turn_takers.remove(entity)
+            if entity.get_component(TurnTakerComponent):
+                self.turn_takers.remove(entity)
 
             # --- Check if Combat is Over ---
             # After killing an enemy, check if any remaining enemies are still active.
@@ -949,8 +986,9 @@ class Game:
         self.player.add_component(PositionComponent(0, 0))
         self.player.add_component(RenderComponent('@', COLOR_ENTITY_WHITE))
         self.player.add_component(TurnTakerComponent())
-        self.player.add_component(StatsComponent(hp=30, power=5, speed=1))
+        self.player.add_component(StatsComponent(hp=30, power=5, speed=1, xp_reward=0)) # Player grants 0 xp
         self.player.add_component(InventoryComponent())
+        self.player.add_component(ExperienceComponent(BASE_XP_TO_LEVEL, LEVEL_UP_FACTOR))
 
         # --- Initialize Core Game Systems ---
         self.dungeon_manager = DungeonManager(self)
@@ -979,9 +1017,11 @@ class Game:
 
         # --- Spawn Entities Based on Counts ---
         entity_data = {
-            "rat": (spawn_counts["rat"], 'r', COLOR_ENTITY_WHITE, StatsComponent(hp=2, power=1, speed=1)),
-            "ghoul": (spawn_counts["ghoul"], 'g', COLOR_CORPSE_PALE, StatsComponent(hp=10, power=2, speed=1)),
-            "skeleton": (spawn_counts["skeleton"], 's', COLOR_BONE_WHITE, StatsComponent(hp=5, power=1, speed=2))
+            "rat": (spawn_counts["rat"], 'r', COLOR_ENTITY_WHITE, StatsComponent(hp=2, power=1, speed=1, xp_reward=5)),
+            "ghoul": (spawn_counts["ghoul"], 'g', COLOR_CORPSE_PALE,
+                      StatsComponent(hp=10, power=2, speed=1, xp_reward=20)),
+            "skeleton": (spawn_counts["skeleton"], 's', COLOR_BONE_WHITE,
+                         StatsComponent(hp=5, power=1, speed=2, xp_reward=15))
         }
 
         for data in entity_data.values():
@@ -1070,6 +1110,32 @@ class Game:
     def set_combat_state(self, is_fighting):
         """Sets the game's combat state, enabling or disabling fast movement."""
         self.is_in_combat = is_fighting
+
+    def check_player_level_up(self):
+        """Checks if the player has enough XP to level up and processes it."""
+        player_exp = self.player.get_component(ExperienceComponent)
+        player_stats = self.player.get_component(StatsComponent)
+
+        # Use a while loop in case the player gains enough XP for multiple levels at once.
+        while player_exp.current_xp >= player_exp.xp_to_next_level:
+            # 1. "Spend" the XP for the level up.
+            player_exp.current_xp -= player_exp.xp_to_next_level
+
+            # 2. Increment the player's level.
+            player_exp.level += 1
+
+            # 3. Recalculate the XP requirement for the *next* level using our formula.
+            player_exp.xp_to_next_level = int(player_exp.base_xp * (player_exp.level ** player_exp.level_factor))
+
+            # 4. Apply the level-up bonuses.
+            player_stats.max_hp += 10
+            player_stats.power += 1
+
+            # 5. Fully heal the player as a reward.
+            player_stats.current_hp = player_stats.max_hp
+
+            # 6. Announce the level up.
+            self.hud.add_message(f"You feel stronger! You have reached level {player_exp.level}!", (50, 255, 50))
 
     def handle_events(self):
         """
@@ -1407,6 +1473,7 @@ class HUD:
     def draw(self, surface, player, dungeon_manager):
         """Draws all HUD elements onto the provided surface."""
         self.draw_health_bar(surface, player)
+        self.draw_xp_bar(surface, player) # Call the new method here.
         self.draw_message_log(surface)
         self.draw_item_status(surface, player)
         self.draw_dungeon_level(surface, dungeon_manager)
@@ -1453,12 +1520,49 @@ class HUD:
         text_surface = self.font.render(numerical_text, True, COLOR_WHITE)
         surface.blit(text_surface, (text_x, y))
 
+    def draw_xp_bar(self, surface, player):
+        """Calculates and draws the player's experience bar."""
+        player_exp = player.get_component(ExperienceComponent)
+        if not player_exp: return
+
+        # --- XP Bar Calculation ---
+        # Prevent division by zero if xp_to_next_level is somehow 0.
+        xp_percentage = 0
+        if player_exp.xp_to_next_level > 0:
+            xp_percentage = player_exp.current_xp / player_exp.xp_to_next_level
+
+        bar_width = 150  # The total pixel width of the XP bar.
+        current_bar_width = int(bar_width * xp_percentage)
+
+        # --- String Construction ---
+        level_text = f"LVL: {player_exp.level}"
+        xp_text = f"XP: {player_exp.current_xp}/{player_exp.xp_to_next_level}"
+
+        # --- Rendering ---
+        x, y = 10, 30  # Position below the health bar.
+
+        # Render the text labels.
+        level_surface = self.font.render(level_text, True, COLOR_WHITE)
+        surface.blit(level_surface, (x, y))
+
+        xp_text_surface = self.font.render(xp_text, True, COLOR_WHITE)
+        # Position the XP text to the right of the level text.
+        surface.blit(xp_text_surface, (x + level_surface.get_width() + 10, y))
+
+        # Render the background of the XP bar.
+        bar_bg_rect = pygame.Rect(x, y + 20, bar_width, 8)
+        pygame.draw.rect(surface, COLOR_HUD_EMPTY_DASH, bar_bg_rect)
+
+        # Render the filled part of the XP bar.
+        bar_fill_rect = pygame.Rect(x, y + 20, current_bar_width, 8)
+        pygame.draw.rect(surface, COLOR_XP_BLUE, bar_fill_rect)
+
     def draw_message_log(self, surface):
         """
         Draws the game's message log to the screen.
         """
         x = 10
-        y = 30  # Start below the health bar.
+        y = 70  # Start below the health and XP bars.
 
         for text, color in self.messages:
             text_surface = self.font.render(text, True, color)
