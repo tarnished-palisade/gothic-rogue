@@ -138,6 +138,7 @@ class GameState(Enum):
     OPTIONS_ROOT = auto()  # The main options menu (with categories).
     OPTIONS_VIDEO = auto()  # The sub-menu for screen resolution settings.
     PLAYER_DEAD = auto()  # A new state for when the player has died.
+    EQUIP_MENU = auto() # The new state for the equipment screen.
 
     # The original GAME_RUNNING state has been replaced by a more granular
     # turn-based system to provide more precise control over game flow.
@@ -300,6 +301,106 @@ class OptionsMenu:
 
         for button in self.buttons:
             button.draw(surface)
+
+class EquipmentMenu:
+    """
+    Manages the UI for viewing and equipping items.
+    - Necessity: To provide the player with a dedicated interface for managing
+                 their character's gear, a core RPG activity.
+    - Function: Displays current stats, equipped items, and equippable items
+                in the inventory, and handles the logic of equipping an item.
+    - Effect: A functional, interactive menu that allows players to make
+              strategic decisions about their loadout.
+    """
+
+    def __init__(self):
+        self.title_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 32)
+        self.header_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 20)
+        self.item_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 18)
+        self.options = []
+        self.selected_index = 0
+
+    def rebuild_options(self, player):
+        """Clears and rebuilds the list of selectable items from the player's inventory."""
+        self.options.clear()
+        inventory = player.get_component(InventoryComponent)
+        if inventory:
+            # Filter the inventory to only include items that have an EquippableComponent.
+            self.options = [item for item in inventory.items if item.get_component(EquippableComponent)]
+
+        # Ensure selected_index is valid.
+        if self.selected_index >= len(self.options):
+            self.selected_index = len(self.options) - 1
+        if self.selected_index < 0:
+            self.selected_index = 0
+
+    def handle_input(self, event):
+        """Processes keyboard input for menu navigation and actions."""
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_UP, pygame.K_w):
+                self.selected_index = (self.selected_index - 1) % len(self.options) if self.options else 0
+            elif event.key in (pygame.K_DOWN, pygame.K_s):
+                self.selected_index = (self.selected_index + 1) % len(self.options) if self.options else 0
+            elif event.key == pygame.K_RETURN and self.options:
+                # Return the selected item entity to be equipped.
+                return {"type": "equip", "item": self.options[self.selected_index]}
+            elif event.key == pygame.K_ESCAPE:
+                # Return an action to close the menu.
+                return {"type": "close"}
+        return None
+
+    def draw(self, surface, player):
+        """Draws all elements of the equipment menu."""
+        # --- Draw Background Panel ---
+        panel_rect = pygame.Rect(50, 50, INTERNAL_WIDTH - 100, INTERNAL_HEIGHT - 100)
+        pygame.draw.rect(surface, (20, 20, 30), panel_rect)  # Dark blue panel
+        pygame.draw.rect(surface, (100, 100, 120), panel_rect, 2)  # Lighter border
+
+        # --- Draw Title ---
+        title_surface = self.title_font.render("Character Inventory", True, COLOR_WHITE)
+        surface.blit(title_surface, (panel_rect.x + 20, panel_rect.y + 15))
+
+        # --- Draw Player Stats ---
+        stats_x = panel_rect.x + 30
+        stats_y = panel_rect.y + 80
+
+        # Use the new getter methods to display final, calculated stats.
+        stats_text = [
+            f"Level: {player.get_component(ExperienceComponent).level}",
+            f"Health: {player.get_component(StatsComponent).current_hp} / {player.get_max_hp()}",
+            f"Power: {player.get_power()}",
+            f"Defense: {player.get_defense()}"
+        ]
+        for i, text in enumerate(stats_text):
+            text_surface = self.item_font.render(text, True, COLOR_WHITE)
+            surface.blit(text_surface, (stats_x, stats_y + i * 25))
+
+        # --- Draw Currently Equipped Items ---
+        equipped_x = panel_rect.x + 250
+        equipped_y = panel_rect.y + 80
+
+        header_surface = self.header_font.render("Equipped", True, COLOR_WHITE)
+        surface.blit(header_surface, (equipped_x, equipped_y))
+
+        equipment = player.get_component(EquipmentComponent)
+        for i, (slot, item) in enumerate(equipment.slots.items()):
+            item_name = item.get_component(ItemComponent).name if item else "None"
+            text = f"{slot.capitalize()}: {item_name}"
+            text_surface = self.item_font.render(text, True, (200, 200, 200))
+            surface.blit(text_surface, (equipped_x + 10, equipped_y + 35 + i * 25))
+
+        # --- Draw Equippable Items in Inventory ---
+        inventory_x = panel_rect.x + 30
+        inventory_y = panel_rect.y + 250
+
+        inv_header = self.header_font.render("Inventory (Equippable)", True, COLOR_WHITE)
+        surface.blit(inv_header, (inventory_x, inventory_y))
+
+        for i, item in enumerate(self.options):
+            item_name = item.get_component(ItemComponent).name
+            color = COLOR_BLOOD_RED if i == self.selected_index else COLOR_WHITE
+            text_surface = self.item_font.render(item_name, True, color)
+            surface.blit(text_surface, (inventory_x + 10, inventory_y + 35 + i * 25))
 
 # ==============================================================================
 # V. Item Functions
@@ -491,11 +592,12 @@ class StatsComponent(Component):
     - Effect: Allows the game to quantify an entity's resilience and strength,
               forming the basis for combat calculations.
     """
-    def __init__(self, hp, power, speed, xp_reward=0):
+    def __init__(self, hp, power, defense, speed, xp_reward=0):
         super().__init__()
         self.max_hp = hp
         self.current_hp = hp
         self.power = power
+        self.defense = defense  # The entity's innate damage reduction.
         self.speed = speed
         self.xp_reward = xp_reward # The amount of XP granted when slain.
 
@@ -535,6 +637,39 @@ class ExperienceComponent(Component):
         self.base_xp = base_xp
         self.level_factor = level_factor
 
+class EquipmentComponent(Component):
+    """
+    Manages an entity's equipped items in designated slots.
+    - Necessity: To provide a dedicated container for an entity's active loadout,
+                 separating it from their general inventory.
+    - Function: Holds a dictionary mapping equipment slots (e.g., "weapon")
+                to the equipped item entity.
+    - Effect: Enables entities to have a persistent loadout that provides
+              bonuses and can be managed by the player.
+    """
+    def __init__(self):
+        super().__init__()
+        self.slots = {
+            "weapon": None,
+            "armor": None
+        }
+
+class EquippableComponent(Component):
+    """
+    Marks an item as equippable and defines its properties.
+    - Necessity: To distinguish equippable gear from other items like potions
+                 and to define the specific bonuses that gear provides.
+    - Function: Stores the item's target slot and its stat bonuses.
+    - Effect: Allows any item entity to be turned into a piece of gear with
+              defined characteristics, forming the basis of the loot system.
+    """
+    def __init__(self, slot, power_bonus=0, defense_bonus=0, max_hp_bonus=0):
+        super().__init__()
+        self.slot = slot
+        self.power_bonus = power_bonus
+        self.defense_bonus = defense_bonus
+        self.max_hp_bonus = max_hp_bonus
+
 class StairsComponent(Component):
     """A marker component for an entity that acts as stairs to the next level."""
     def __init__(self):
@@ -554,6 +689,45 @@ class Entity:
     def get_component(self, component_type):
         """Retrieves a component of a specific type from the entity."""
         return self.components.get(component_type)
+
+    def get_max_hp(self):
+        """Calculates the entity's total max HP, including bonuses from equipment."""
+        base_hp = self.get_component(StatsComponent).max_hp
+
+        equipment = self.get_component(EquipmentComponent)
+        if equipment:
+            for item in equipment.slots.values():
+                if item:
+                    equippable = item.get_component(EquippableComponent)
+                    if equippable:
+                        base_hp += equippable.max_hp_bonus
+        return base_hp
+
+    def get_power(self):
+        """Calculates the entity's total power, including bonuses from equipment."""
+        base_power = self.get_component(StatsComponent).power
+
+        equipment = self.get_component(EquipmentComponent)
+        if equipment:
+            for item in equipment.slots.values():
+                if item:
+                    equippable = item.get_component(EquippableComponent)
+                    if equippable:
+                        base_power += equippable.power_bonus
+        return base_power
+
+    def get_defense(self):
+        """Calculates the entity's total defense, including bonuses from equipment."""
+        base_defense = self.get_component(StatsComponent).defense
+
+        equipment = self.get_component(EquipmentComponent)
+        if equipment:
+            for item in equipment.slots.values():
+                if item:
+                    equippable = item.get_component(EquippableComponent)
+                    if equippable:
+                        base_defense += equippable.defense_bonus
+        return base_defense
 
 # ==============================================================================
 # VII. Game World (Principle: Scalability)
@@ -818,10 +992,16 @@ class TurnManager:
             # Next, check if the entity is an item to be picked up.
             elif target_entity.get_component(ItemComponent):
                 inventory = self.player.get_component(InventoryComponent)
-                inventory.items.append(target_entity)
-                self.game.entities.remove(target_entity)
-                self.game.hud.add_message("You pick up a potion!", (255, 180, 255))
-                return True  # Picking up an item takes a turn.
+                item_component = target_entity.get_component(ItemComponent)
+
+                if inventory and item_component:
+                    inventory.items.append(target_entity)
+                    self.game.entities.remove(target_entity)
+                    # Use the item's actual name in the message.
+                    item_name = item_component.name
+                    self.game.hud.add_message(f"You pick up the {item_name}.", (200, 200, 255))
+                    return True  # Picking up an item takes a turn.
+
             # Otherwise, the entity must be an enemy to attack.
             else:
                 self.process_attack(self.player, target_entity)
@@ -859,17 +1039,31 @@ class TurnManager:
 
     def process_attack(self, attacker, defender):
         """Handles the logic for one entity attacking another."""
-        attacker_stats = attacker.get_component(StatsComponent)
+        # Get the defender's stats component directly, as we need to modify current_hp.
         defender_stats = defender.get_component(StatsComponent)
+        if not defender_stats: return
 
-        if not attacker_stats or not defender_stats: return
+        # Use the new getter methods to calculate effective power and defense.
+        attacker_power = attacker.get_power()
+        defender_defense = defender.get_defense()
 
-        damage = attacker_stats.power
+        # The core damage formula.
+        damage = attacker_power - defender_defense
+
+        # Ensure damage is at least 0. We don't want attacks to heal the target.
+        if damage < 0:
+            damage = 0
+
         defender_stats.current_hp -= damage
 
         attacker_char = attacker.get_component(RenderComponent).char
         defender_char = defender.get_component(RenderComponent).char
-        self.game.hud.add_message(f"The {attacker_char} strikes the {defender_char} for {damage} damage!", COLOR_MESSAGE_DAMAGE)
+
+        if damage > 0:
+            self.game.hud.add_message(f"The {attacker_char} strikes the {defender_char} for {damage} damage!",
+                                      COLOR_MESSAGE_DAMAGE)
+        else:
+            self.game.hud.add_message(f"The {attacker_char} fails to harm the {defender_char}.", COLOR_MESSAGE_DEFAULT)
 
         # Check if the defender died.
         if defender_stats.current_hp <= 0:
@@ -939,6 +1133,7 @@ class Game:
         # We now have dedicated instances for each main menu screen.
         self.main_menu = Menu()
         self.options_menu = OptionsMenu()
+        self.equipment_menu = EquipmentMenu()
         # Give the options menu a reference back to the main game object.
         # This allows it to know the current game state to rebuild its buttons.
         self.options_menu.game = self
@@ -986,9 +1181,10 @@ class Game:
         self.player.add_component(PositionComponent(0, 0))
         self.player.add_component(RenderComponent('@', COLOR_ENTITY_WHITE))
         self.player.add_component(TurnTakerComponent())
-        self.player.add_component(StatsComponent(hp=30, power=5, speed=1, xp_reward=0)) # Player grants 0 xp
+        self.player.add_component(StatsComponent(hp=30, power=5, defense=1, speed=1, xp_reward=0)) # Player grants 0 xp
         self.player.add_component(InventoryComponent())
         self.player.add_component(ExperienceComponent(BASE_XP_TO_LEVEL, LEVEL_UP_FACTOR))
+        self.player.add_component(EquipmentComponent())
 
         # --- Initialize Core Game Systems ---
         self.dungeon_manager = DungeonManager(self)
@@ -1017,11 +1213,11 @@ class Game:
 
         # --- Spawn Entities Based on Counts ---
         entity_data = {
-            "rat": (spawn_counts["rat"], 'r', COLOR_ENTITY_WHITE, StatsComponent(hp=2, power=1, speed=1, xp_reward=5)),
+            "rat": (spawn_counts["rat"], 'r', COLOR_ENTITY_WHITE, StatsComponent(hp=2, power=1, defense=0, speed=1, xp_reward=5)),
             "ghoul": (spawn_counts["ghoul"], 'g', COLOR_CORPSE_PALE,
-                      StatsComponent(hp=10, power=2, speed=1, xp_reward=20)),
+                      StatsComponent(hp=10, power=2, defense=2, speed=1, xp_reward=20)),
             "skeleton": (spawn_counts["skeleton"], 's', COLOR_BONE_WHITE,
-                         StatsComponent(hp=5, power=1, speed=2, xp_reward=15))
+                         StatsComponent(hp=5, power=1, defense=1, speed=2, xp_reward=15))
         }
 
         for data in entity_data.values():
@@ -1070,6 +1266,35 @@ class Game:
                 ItemComponent(name="Scroll of Teleportation", use_function=teleport, game_map=self.game_map,
                               entities=self.entities))
             self.entities.append(scroll)
+
+            # --- Spawn Equipment ---
+            # Spawn a Rusty Dagger
+            dagger = Entity()
+            while True:
+                x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
+                if self.game_map.is_walkable(x, y) and not any(
+                        e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
+                        for e in self.entities):
+                    dagger.add_component(PositionComponent(x, y))
+                    break
+            dagger.add_component(RenderComponent(')', (139, 137, 137)))  # A dull grey color
+            dagger.add_component(ItemComponent(name="Rusty Dagger"))
+            dagger.add_component(EquippableComponent(slot="weapon", power_bonus=2))
+            self.entities.append(dagger)
+
+            # Spawn Leather Armor
+            armor = Entity()
+            while True:
+                x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
+                if self.game_map.is_walkable(x, y) and not any(
+                        e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
+                        for e in self.entities):
+                    armor.add_component(PositionComponent(x, y))
+                    break
+            armor.add_component(RenderComponent('[', (139, 69, 19)))  # A brown color
+            armor.add_component(ItemComponent(name="Leather Armor"))
+            armor.add_component(EquippableComponent(slot="armor", defense_bonus=1))
+            self.entities.append(armor)
 
         # --- Spawn Stairs Down ---
         stairs = Entity()
@@ -1136,6 +1361,34 @@ class Game:
 
             # 6. Announce the level up.
             self.hud.add_message(f"You feel stronger! You have reached level {player_exp.level}!", (50, 255, 50))
+
+    def equip_item(self, item_to_equip):
+        """Handles the logic of equipping an item from inventory."""
+        inventory = self.player.get_component(InventoryComponent)
+        equipment = self.player.get_component(EquipmentComponent)
+        equippable = item_to_equip.get_component(EquippableComponent)
+
+        if not all([inventory, equipment, equippable]):
+            return  # Safety check
+
+        slot = equippable.slot
+
+        # --- Unequip Old Item (if any) ---
+        # Check if there is already an item in the target slot.
+        currently_equipped_item = equipment.slots.get(slot)
+        if currently_equipped_item:
+            # Move the currently equipped item back to the inventory list.
+            inventory.items.append(currently_equipped_item)
+            item_name = currently_equipped_item.get_component(ItemComponent).name
+            self.hud.add_message(f"You unequip the {item_name}.", (255, 255, 100))
+
+        # --- Equip New Item ---
+        # Remove the new item from the inventory list.
+        inventory.items.remove(item_to_equip)
+        # Place the new item into the now-empty slot.
+        equipment.slots[slot] = item_to_equip
+        item_name = item_to_equip.get_component(ItemComponent).name
+        self.hud.add_message(f"You equip the {item_name}.", (100, 255, 100))
 
     def handle_events(self):
         """
@@ -1234,10 +1487,31 @@ class Game:
                             # noinspection PyTypeChecker
                             self.options_menu.rebuild_buttons(self.game_state)
 
+            elif self.game_state == GameState.EQUIP_MENU:
+                # --- DIAGNOSTIC PRINT ---
+                print(f"EQUIP_MENU received event: {event}")
+
+                # CONTEXT: The player is managing their equipment.
+                # GOAL: Let the EquipmentMenu handle input and return an action.
+                action = self.equipment_menu.handle_input(event)
+                if action:
+                    if action["type"] == "close":
+                        self.game_state = GameState.PLAYER_TURN
+                    elif action["type"] == "equip":
+                        self.equip_item(action["item"])
+                        # After equipping, the inventory has changed, so rebuild the options.
+                        self.equipment_menu.rebuild_options(self.player)
+
             elif self.game_state == GameState.PLAYER_TURN:
                 # CONTEXT: It is the player's turn to act.
                 # GOAL: Process a single, discrete action from a key press.
                 if event.type == pygame.KEYDOWN:
+                    # --- Action: Open Equipment Menu ---
+                    if event.key == pygame.K_e:
+                        # Rebuild the menu's options before showing it.
+                        self.equipment_menu.rebuild_options(self.player)
+                        self.game_state = GameState.EQUIP_MENU
+
                     action_taken = False
 
                     # --- Action: Use Health Potion ---
@@ -1360,6 +1634,9 @@ class Game:
             if self.game_state != GameState.PLAYER_DEAD:
                 self.game_state = GameState.PLAYER_TURN
 
+        elif self.game_state == GameState.EQUIP_MENU:
+            pass  # The menu is static and only updates based on key events.
+
         elif self.game_state == GameState.PLAYER_DEAD:
             # If the player is dead, we only update the fade-to-black animation.
             self.death_fade_alpha += self.death_fade_speed * delta_time
@@ -1375,10 +1652,13 @@ class Game:
             self.main_menu.draw(self.internal_surface)
 
         elif self.game_state in [GameState.OPTIONS_ROOT, GameState.OPTIONS_VIDEO]:
-            # The options menu needs to know the current state to draw the correct title.
             self.options_menu.draw(self.internal_surface, self.game_state)
 
-        elif self.game_state in [GameState.PLAYER_TURN, GameState.ENEMY_TURN, GameState.PLAYER_DEAD]:
+        # --- Combined Block for All In-Game States ---
+        # If the state is any of the main gameplay states (including the equip menu),
+        # we always draw the game world first.
+        elif self.game_state in [GameState.PLAYER_TURN, GameState.ENEMY_TURN, GameState.PLAYER_DEAD,
+                                     GameState.EQUIP_MENU]:
             self.camera.update(self.player)
 
             # Draw the game world, entities, and HUD.
@@ -1398,7 +1678,6 @@ class Game:
             for entity in self.entities:
                 pos = entity.get_component(PositionComponent)
                 render = entity.get_component(RenderComponent)
-
                 if pos and render:
                     entity_rect = pygame.Rect(pos.x * TILE_SIZE, pos.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
                     visible_rect = self.camera.apply(entity_rect)
@@ -1408,31 +1687,41 @@ class Game:
 
             self.hud.draw(self.internal_surface, self.player, self.dungeon_manager)
 
-        # Draw the FPS counter in ANY state, if enabled. This makes it always visible.
+            # --- Conditional Overlays ---
+            # Now, draw specific overlays ON TOP of the game world based on the state.
+            if self.game_state == GameState.EQUIP_MENU:
+                self.equipment_menu.draw(self.internal_surface, self.player)
+
+            elif self.game_state == GameState.PLAYER_DEAD:
+                # Set the transparency of our fade surface based on the current alpha.
+                self.death_fade_surface.set_alpha(int(self.death_fade_alpha))
+                # Draw the semi-transparent black surface over the whole screen.
+                self.internal_surface.blit(self.death_fade_surface, (0, 0))
+
+                # Only draw the death text and restart prompt after the screen is mostly faded.
+                if self.death_fade_alpha > 200:
+                    death_text = self.death_font.render("YOU DIED", True, COLOR_BLOOD_RED)
+                    text_rect = death_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 - 30))
+                    self.internal_surface.blit(death_text, text_rect)
+
+                    restart_font = self.options_menu.button_font
+                    restart_text = restart_font.render("Press Enter to Return to the Menu", True, COLOR_WHITE)
+                    restart_rect = restart_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 + 40))
+                    self.internal_surface.blit(restart_text, restart_rect)
+
+        # --- Always-on-Top Drawing ---
+        # Draw the FPS counter in ANY state, if enabled.
         if settings_manager.get("show_fps"):
             self.fps_counter.draw(self.internal_surface, self.clock)
-
-        # If the player is dead, draw the death message over everything else.
-        if self.game_state == GameState.PLAYER_DEAD:
-            # Set the transparency of our fade surface based on the current alpha.
-            self.death_fade_surface.set_alpha(int(self.death_fade_alpha))
-            # Draw the semi-transparent black surface over the whole screen.
-            self.internal_surface.blit(self.death_fade_surface, (0, 0))
-
-            # Only draw the death text and restart prompt after the screen is mostly faded.
-            if self.death_fade_alpha > 200:
-                death_text = self.death_font.render("YOU DIED", True, COLOR_BLOOD_RED)
-                text_rect = death_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 - 30))
-                self.internal_surface.blit(death_text, text_rect)
-
-                restart_font = self.options_menu.button_font
-                restart_text = restart_font.render("Press Enter to Return to the Menu", True, COLOR_WHITE)
-                restart_rect = restart_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 + 40))
-                self.internal_surface.blit(restart_text, restart_rect)
 
         # Always draw the debug overlay if it's enabled.
         self.debug_overlay.draw(self.internal_surface,
                                 {"FPS": f"{self.clock.get_fps():.1f}", "State": self.game_state.name})
+
+        # Final scaling and screen update.
+        scaled_surface = pygame.transform.scale(self.internal_surface, (SCREEN_WIDTH, SCREEN_HEIGHT))
+        self.screen.blit(scaled_surface, (0, 0))
+        pygame.display.flip()
 
         # Final scaling and screen update.
         scaled_surface = pygame.transform.scale(self.internal_surface, (SCREEN_WIDTH, SCREEN_HEIGHT))
