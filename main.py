@@ -402,6 +402,77 @@ class EquipmentMenu:
             text_surface = self.item_font.render(item_name, True, color)
             surface.blit(text_surface, (inventory_x + 10, inventory_y + 35 + i * 25))
 
+class HelpMenu:
+    """
+    Manages a toggleable, in-game help screen displaying keybindings.
+    - Necessity: To provide players with a non-intrusive, easily accessible
+                 reference for game controls, improving user experience.
+    - Function: Toggles a list of controls on/off and manages a subtle
+                animation for its icon.
+    - Effect: A clean, decoupled UI element for player assistance that can
+              be accessed at any time during gameplay.
+    """
+
+    def __init__(self):
+        self.font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 16)
+        self.is_open = False
+        self.has_been_opened_once = False
+        self.animation_timer = 0.0
+        # This list contains the text for the help menu.
+        self.keybindings = [
+            "[ Gameplay ]",
+            "Move / Attack: WASD or Arrows",
+            "Descend Stairs: > (Shift + .)",
+            "",  # Spacer
+            "[ Actions ]",
+            "Use Health Potion: H",
+            "Read Scroll: R",
+            "",  # Spacer
+            "[ Menus ]",
+            "Equipment / Inventory: E",
+            "Close Any Menu: ESC",
+            "",  # Spacer
+            "[ System ]",
+            "Toggle Debug Info: F12",
+        ]
+
+    def toggle(self):
+        """Switches the menu between its open and closed states."""
+        self.is_open = not self.is_open
+        # Once opened for the first time, disable the introductory animation.
+        if not self.has_been_opened_once:
+            self.has_been_opened_once = True
+
+    def update(self, delta_time):
+        """Updates the animation timer."""
+        self.animation_timer += delta_time * 4  # Speed up the wobble effect
+
+    def draw(self, surface):
+        """Draws the help menu icon or the full list of keybindings."""
+        margin = 40 # Increased margin to shift the menu up
+        if self.is_open:
+            # --- Draw the full help text ---
+            # Add the instruction to close the menu to the list dynamically.
+            full_text_list = self.keybindings + ["", "Close This Menu: i"]
+
+            for i, text in enumerate(reversed(full_text_list)):
+                text_surface = self.font.render(text, True, COLOR_WHITE)
+                x_pos = INTERNAL_WIDTH - text_surface.get_width() - margin
+                # Draw from the bottom up.
+                y_pos = INTERNAL_HEIGHT - text_surface.get_height() - margin - (i * 20)
+                surface.blit(text_surface, (x_pos, y_pos))
+        else:
+            # --- Draw the 'i' icon ---
+            y_offset = 0
+            # Only apply the wobble animation if the menu has never been opened.
+            if not self.has_been_opened_once:
+                y_offset = int(math.sin(self.animation_timer) * 3)  # 3-pixel bounce
+
+            text_surface = self.font.render("[i]", True, COLOR_WHITE)
+            x_pos = INTERNAL_WIDTH - text_surface.get_width() - margin
+            y_pos = INTERNAL_HEIGHT - text_surface.get_height() - margin + y_offset
+            surface.blit(text_surface, (x_pos, y_pos))
+
 # ==============================================================================
 # V. Item Functions
 # These are standalone functions that define the effects of usable items.
@@ -1134,6 +1205,7 @@ class Game:
         self.main_menu = Menu()
         self.options_menu = OptionsMenu()
         self.equipment_menu = EquipmentMenu()
+        self.help_menu = HelpMenu()
         # Give the options menu a reference back to the main game object.
         # This allows it to know the current game state to rebuild its buttons.
         self.options_menu.game = self
@@ -1416,6 +1488,12 @@ class Game:
                 self.game_state = GameState.QUIT
                 return  # Exit the method immediately to stop further processing.
 
+            # --- Help Menu Toggle ---
+            # This is checked globally, outside the main state machine, so it's always accessible.
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_i:
+                    self.help_menu.toggle()
+
             # A key was pressed. We check for global hotkeys here.
             if event.type == pygame.KEYDOWN:
                 # The F12 key toggles the developer debug overlay. This is a
@@ -1599,6 +1677,7 @@ class Game:
         The logic is structured as a state machine, ensuring only the code for
         the current game state is executed.
         """
+        self.help_menu.update(delta_time)  # Update the help menu's animation timer.
         # This is a clean if/elif chain, making the state transitions mutually exclusive.
         if self.game_state == GameState.MAIN_MENU:
             self.main_menu.update(delta_time)
@@ -1713,6 +1792,9 @@ class Game:
         # Draw the FPS counter in ANY state, if enabled.
         if settings_manager.get("show_fps"):
             self.fps_counter.draw(self.internal_surface, self.clock)
+
+        # Draw the help menu.
+        self.help_menu.draw(self.internal_surface)
 
         # Always draw the debug overlay if it's enabled.
         self.debug_overlay.draw(self.internal_surface,
