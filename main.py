@@ -111,8 +111,11 @@ COLOR_MESSAGE_HEAL = (100, 255, 100)   # Light green for healing messages.
 
 # --- XP & Leveling ---
 COLOR_XP_BLUE = (100, 150, 255) # A vibrant blue for the experience bar.
-BASE_XP_TO_LEVEL = 100          # XP needed for the first level up.
-LEVEL_UP_FACTOR = 1.5           # The scaling exponent for leveling.
+BASE_XP_TO_LEVEL = 100 # XP needed for the first level up.
+LEVEL_UP_FACTOR = 1.5  # The scaling exponent for leveling.
+
+# --- Boss Configuration ---
+VAMPIRE_LEVEL = 10 # The dungeon level where the Vampire Lord appears.
 
 # --- Font and Tile Settings ---
 # The name of the monospaced font to be used for all game text.
@@ -139,6 +142,8 @@ class GameState(Enum):
     OPTIONS_VIDEO = auto()  # The sub-menu for screen resolution settings.
     PLAYER_DEAD = auto()  # A new state for when the player has died.
     EQUIP_MENU = auto() # The new state for the equipment screen.
+    DIALOGUE = auto()  # A new state for displaying dialogue.
+    VICTORY = auto()  # A new state for when the game is won.
 
     # The original GAME_RUNNING state has been replaced by a more granular
     # turn-based system to provide more precise control over game flow.
@@ -430,6 +435,7 @@ class HelpMenu:
             "",  # Spacer
             "[ Menus ]",
             "Equipment / Inventory: E",
+            "Advance Dialogue: ENTER", # Add the new keybinding here
             "Close Any Menu: ESC",
             "",  # Spacer
             "[ System ]",
@@ -472,6 +478,79 @@ class HelpMenu:
             x_pos = INTERNAL_WIDTH - text_surface.get_width() - margin
             y_pos = INTERNAL_HEIGHT - text_surface.get_height() - margin + y_offset
             surface.blit(text_surface, (x_pos, y_pos))
+
+
+class DialogueViewer:
+    """
+    Manages the UI for displaying a dialogue sequence.
+    - Necessity: To provide a clean, focused interface for narrative events,
+                 pausing the game to deliver story or character moments.
+    - Function: Renders a dialogue box and text, advancing line-by-line
+                based on player input.
+    - Effect: A reusable, decoupled UI system for cinematic storytelling.
+    """
+
+    def __init__(self):
+        self.font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 18)
+        self.speaker_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 16)
+        self.active_entity = None
+        self.current_line_index = 0
+        self.dialogue_lines = []
+        self.speaker_name = ""
+
+    def start_dialogue(self, entity):
+        """Prepares the viewer for a new dialogue sequence."""
+        dialogue_comp = entity.get_component(DialogueComponent)
+        if not dialogue_comp:
+            return False  # Cannot start dialogue if the entity has none.
+
+        self.active_entity = entity
+        self.current_line_index = 0
+        self.speaker_name = dialogue_comp.speaker_name
+
+        # Use subsequent dialogue if the player has already spoken to this entity.
+        if dialogue_comp.has_spoken:
+            self.dialogue_lines = dialogue_comp.subsequent_dialogue_lines
+        else:
+            self.dialogue_lines = dialogue_comp.dialogue_lines
+
+        return True
+
+    def handle_input(self, event):
+        """Listens only for the Enter key to advance or close the dialogue."""
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+            self.current_line_index += 1
+            # Check if we have run out of dialogue lines.
+            if self.current_line_index >= len(self.dialogue_lines):
+                # Mark the dialogue as finished and signal to close.
+                dialogue_comp = self.active_entity.get_component(DialogueComponent)
+                dialogue_comp.has_spoken = True
+                return "finished"
+        return None
+
+    def draw(self, surface):
+        """Draws the dialogue box and the current line of text."""
+        if not self.active_entity:
+            return
+
+        # --- Draw Background Panel ---
+        panel_height = 100
+        panel_rect = pygame.Rect(50, INTERNAL_HEIGHT - panel_height - 30, INTERNAL_WIDTH - 100, panel_height)
+
+        # Create a semi-transparent surface for the panel
+        panel_surface = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        panel_surface.fill((10, 10, 20, 200))  # Dark blue with 200/255 alpha
+        surface.blit(panel_surface, panel_rect.topleft)
+        pygame.draw.rect(surface, (100, 100, 120), panel_rect, 2)  # Lighter border
+
+        # --- Draw Speaker Name ---
+        speaker_surface = self.speaker_font.render(f"{self.speaker_name}:", True, (200, 180, 100))
+        surface.blit(speaker_surface, (panel_rect.x + 15, panel_rect.y + 10))
+
+        # --- Draw Current Dialogue Line ---
+        current_line = self.dialogue_lines[self.current_line_index]
+        text_surface = self.font.render(current_line, True, COLOR_WHITE)
+        surface.blit(text_surface, (panel_rect.x + 20, panel_rect.y + 45))
 
 # ==============================================================================
 # V. Item Functions
@@ -574,50 +653,64 @@ class AIComponent(Component):
     - Effect: Creates dynamic, responsive enemies that can hunt the player.
     """
 
-    def __init__(self, sight_radius=8):
+    def __init__(self, sight_radius=8, is_stationary=False):
         super().__init__()
         self.state = 'IDLE'
         self.sight_radius = sight_radius
+        self.is_stationary = is_stationary
         self.turns_since_player_seen = 0
 
     def take_turn(self, turn_manager, player):
         """Called by the TurnManager for the enemy's turn. Contains all AI logic."""
-        # Get this entity's position and the player's position.
+        # Get entity and player positions at the start. This ensures they are always defined.
         pos = self.owner.get_component(PositionComponent)
         player_pos = player.get_component(PositionComponent)
         if not pos or not player_pos: return
 
+        # A stationary entity in an IDLE state does nothing until it sees the player.
+        if self.is_stationary and self.state == 'IDLE':
+            distance_to_player = abs(pos.x - player_pos.x) + abs(pos.y - player_pos.y)
+            if distance_to_player > self.sight_radius:
+                return  # If player is out of sight, do nothing.
+
         # --- State Transition Logic ---
-        # Calculate distance to player (Manhattan distance is fast and good for grids).
         distance_to_player = abs(pos.x - player_pos.x) + abs(pos.y - player_pos.y)
 
         if distance_to_player <= self.sight_radius:
-            # If the player is seen for the first time, transition to ACTIVE state.
+            # --- Dialogue Trigger ---
+            dialogue_comp = self.owner.get_component(DialogueComponent)
+            if dialogue_comp and not dialogue_comp.has_spoken:
+                if turn_manager.game.dialogue_viewer.start_dialogue(self.owner):
+                    turn_manager.game.game_state = GameState.DIALOGUE
+                return
+
             if self.state == 'IDLE':
-                turn_manager.game.set_combat_state(True)  # Signal combat start
+                turn_manager.game.set_combat_state(True)
             self.state = 'ACTIVE'
             self.turns_since_player_seen = 0
         else:
             self.turns_since_player_seen += 1
-            # If player is unseen for 5 turns, go back to idle.
             if self.turns_since_player_seen >= 5:
                 self.state = 'IDLE'
 
         # --- Action Logic based on State ---
-        if self.state == 'ACTIVE':
-            # 5% chance to do nothing, adding variety to behavior.
-            if random.randint(1, 100) <= 5:
-                return  # Skip turn.
-
-            # If adjacent to the player, attack.
+        # A stationary entity will not enter the 'move_towards' or 'move_randomly' blocks.
+        if self.is_stationary:
+            # If adjacent to the player, attack. Otherwise, do nothing.
             if distance_to_player <= 1:
                 turn_manager.process_attack(self.owner, player)
-            # Otherwise, move towards the player.
+            return  # End turn after attacking or doing nothing.
+
+        if self.state == 'ACTIVE':
+            if random.randint(1, 100) <= 5:
+                return
+
+            if distance_to_player <= 1:
+                turn_manager.process_attack(self.owner, player)
             else:
                 self.move_towards(player_pos, turn_manager)
 
         elif self.state == 'IDLE':
-            # Perform a simple random walk.
             self.move_randomly(turn_manager)
 
     def move_towards(self, target_pos, turn_manager):
@@ -740,6 +833,33 @@ class EquippableComponent(Component):
         self.power_bonus = power_bonus
         self.defense_bonus = defense_bonus
         self.max_hp_bonus = max_hp_bonus
+
+class VampireComponent(Component):
+    """
+    A marker component for the Vampire Lord boss.
+    - Necessity: To uniquely identify the final boss for special mechanics
+                 like regeneration and to trigger the game's victory condition.
+    - Function: Acts as a unique flag for the game's systems to query.
+    - Effect: Creates a unique, identifiable boss entity.
+    """
+    def __init__(self):
+        super().__init__()
+
+class DialogueComponent(Component):
+    """
+    Holds the data for a dialogue sequence for an entity.
+    - Necessity: To attach a narrative event to an entity, creating a more
+                 cinematic and engaging encounter.
+    - Function: Stores the speaker's name and lines of dialogue.
+    - Effect: A decoupled data container for narrative events.
+    """
+    def __init__(self, speaker_name, dialogue_lines, subsequent_dialogue_lines=None):
+        super().__init__()
+        self.speaker_name = speaker_name
+        self.dialogue_lines = dialogue_lines
+        # For the easter egg on subsequent runs
+        self.subsequent_dialogue_lines = subsequent_dialogue_lines if subsequent_dialogue_lines else dialogue_lines
+        self.has_spoken = False
 
 class StairsComponent(Component):
     """A marker component for an entity that acts as stairs to the next level."""
@@ -1108,8 +1228,21 @@ class TurnManager:
                 if ai:
                     ai.take_turn(self, self.player)
 
+                # --- Vampire Regeneration Mechanic ---
+                if entity.get_component(VampireComponent):
+                    stats = entity.get_component(StatsComponent)
+                    if stats.current_hp < stats.max_hp:
+                        stats.current_hp += 1  # Regenerate 1 HP per action
+
     def process_attack(self, attacker, defender):
         """Handles the logic for one entity attacking another."""
+        # --- God Mode Check ---
+        # If the defender is the player and god mode is active, nullify all damage.
+        if defender is self.game.player and self.game.god_mode_active:
+            attacker_char = attacker.get_component(RenderComponent).char
+            self.game.hud.add_message(f"The {attacker_char}'s attack glances off harmlessly.", (200, 200, 200))
+            return  # Exit the method before any damage is calculated.
+
         # Get the defender's stats component directly, as we need to modify current_hp.
         defender_stats = defender.get_component(StatsComponent)
         if not defender_stats: return
@@ -1162,6 +1295,10 @@ class TurnManager:
         if entity is self.player:
             self.game.game_state = GameState.PLAYER_DEAD
         else:
+            # --- Victory Condition Check ---
+            if entity.get_component(VampireComponent):
+                self.game.game_state = GameState.VICTORY
+
             # Remove the entity from all tracked lists.
             self.game.entities.remove(entity)
             if entity.get_component(TurnTakerComponent):
@@ -1206,6 +1343,7 @@ class Game:
         self.options_menu = OptionsMenu()
         self.equipment_menu = EquipmentMenu()
         self.help_menu = HelpMenu()
+        self.dialogue_viewer = DialogueViewer()  # Add the new dialogue viewer instance.
         # Give the options menu a reference back to the main game object.
         # This allows it to know the current game state to rebuild its buttons.
         self.options_menu.game = self
@@ -1231,6 +1369,7 @@ class Game:
         self.fast_move_timer = 0.0
         self.FAST_MOVE_INTERVAL = 0.1
         self.is_in_combat = False
+        self.god_mode_active = False
 
         # --- Pre-declare Game World Attributes ---
         # We define these here with default values so the linter knows they will
@@ -1244,6 +1383,23 @@ class Game:
 
         # Call the setup method to initialize the first game state.
         self.setup_new_game()
+
+        # --- Developer Cheats ---
+        # Check for command-line arguments to enable testing shortcuts.
+        if "--vampire" in sys.argv:
+            # If the --vampire flag is used, start the player on level 9.
+            self.dungeon_manager.dungeon_level = 9
+            self.hud.add_message("CHEAT: Warped to Level 9.", (255, 255, 0))
+
+        # Add this new block for the god mode cheat
+        if "--godmode" in sys.argv:
+            self.god_mode_active = True
+            self.hud.add_message("CHEAT: God Mode Activated.", (255, 215, 0))
+
+        # --- Developer Cheats Command Line Arguments ---
+        # python main.py --vampire (Starts on level 9)
+        # python main.py --godmode (Makes you invincible)
+        # python main.py --vampire --godmode (Starts on level 9 and makes you invincible)
 
     def setup_new_game(self):
         """Initializes the game for a new run, creating the player and the first level."""
@@ -1283,61 +1439,95 @@ class Game:
         # Reset entity list with only the player.
         self.entities = [self.player]
 
-        # --- Spawn Entities Based on Counts ---
-        entity_data = {
-            "rat": (spawn_counts["rat"], 'r', COLOR_ENTITY_WHITE, StatsComponent(hp=2, power=1, defense=0, speed=1, xp_reward=5)),
-            "ghoul": (spawn_counts["ghoul"], 'g', COLOR_CORPSE_PALE,
-                      StatsComponent(hp=10, power=2, defense=2, speed=1, xp_reward=20)),
-            "skeleton": (spawn_counts["skeleton"], 's', COLOR_BONE_WHITE,
-                         StatsComponent(hp=5, power=1, defense=1, speed=2, xp_reward=15))
-        }
+        # --- Populate the Level ---
+        if self.dungeon_manager.dungeon_level == VAMPIRE_LEVEL:
+            # --- BOSS LEVEL ---
+            # On the final level, spawn only the Vampire Lord in the center.
+            vampire = Entity()
+            vampire.add_component(PositionComponent(map_width // 2, map_height // 2))
+            vampire.add_component(RenderComponent('V', COLOR_BLOOD_RED))
+            vampire.add_component(StatsComponent(hp=100, power=10, defense=5, speed=1, xp_reward=1000))
+            vampire.add_component(AIComponent(is_stationary=True)) # The AI component is added for sight checks.
+            vampire.add_component(VampireComponent())
+            vampire.add_component(TurnTakerComponent()) # The boss needs a turn for its logic to run.
 
-        for data in entity_data.values():
-            count, char, color, stats = data
-            for _ in range(count):
-                entity = Entity()
+            # Add the Dialogue Component with your custom dialogue.
+            vampire.add_component(DialogueComponent(
+                speaker_name="Vampire Lord",
+                dialogue_lines=[
+                    "So, another fool arrives to offer their blood.",
+                    "You reek of determination. A tedious flavor.",
+                    "Let us see if your conviction outlasts your life."
+                ],
+                subsequent_dialogue_lines=[
+                    "You again? Your persistence is a monument to your own futility.",
+                    "The abyss has spat you out, but I will send you back."
+                ]
+            ))
+            self.entities.append(vampire)
+            # NOTE: No stairs or other items spawn on the boss level, creating a sealed arena.
+
+            # Place the player a few tiles below the Vampire Lord.
+            player_pos.x = map_width // 2
+            player_pos.y = map_height // 2 + 5
+
+        else:
+            # --- REGULAR LEVEL ---
+            # --- Spawn Entities Based on Counts ---
+            entity_data = {
+                "rat": (spawn_counts["rat"], 'r', COLOR_ENTITY_WHITE, StatsComponent(hp=2, power=1, defense=0, speed=1, xp_reward=5)),
+                "ghoul": (spawn_counts["ghoul"], 'g', COLOR_CORPSE_PALE,
+                          StatsComponent(hp=10, power=2, defense=2, speed=1, xp_reward=20)),
+                "skeleton": (spawn_counts["skeleton"], 's', COLOR_BONE_WHITE,
+                             StatsComponent(hp=5, power=1, defense=1, speed=2, xp_reward=15))
+            }
+
+            for data in entity_data.values():
+                count, char, color, stats = data
+                for _ in range(count):
+                    entity = Entity()
+                    while True:
+                        x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
+                        if self.game_map.is_walkable(x, y) and not any(
+                                e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
+                                for e in self.entities):
+                            entity.add_component(PositionComponent(x, y))
+                            break
+                    entity.add_component(RenderComponent(char, color))
+                    entity.add_component(TurnTakerComponent())
+                    entity.add_component(AIComponent())
+                    entity.add_component(stats)
+                    self.entities.append(entity)
+
+            # --- Spawn Potion ---
+            for _ in range(spawn_counts["potion"]):
+                potion = Entity()
                 while True:
                     x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
                     if self.game_map.is_walkable(x, y) and not any(
                             e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
                             for e in self.entities):
-                        entity.add_component(PositionComponent(x, y))
+                        potion.add_component(PositionComponent(x, y))
                         break
-                entity.add_component(RenderComponent(char, color))
-                entity.add_component(TurnTakerComponent())
-                entity.add_component(AIComponent())
-                entity.add_component(stats)
-                self.entities.append(entity)
+                potion.add_component(RenderComponent('!', COLOR_HEALING_RED))
+                potion.add_component(ItemComponent(name="Health Potion", use_function=heal, amount=15))
+                self.entities.append(potion)
 
-        # --- Spawn Potion ---
-        for _ in range(spawn_counts["potion"]):
-            potion = Entity()
-            while True:
-                x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
-                if self.game_map.is_walkable(x, y) and not any(
-                        e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
-                        for e in self.entities):
-                    potion.add_component(PositionComponent(x, y))
-                    break
-            potion.add_component(RenderComponent('!', COLOR_HEALING_RED))
-            potion.add_component(ItemComponent(name="Health Potion", use_function=heal, amount=15))
-            self.entities.append(potion)
-
-        # --- Spawn Scrolls of Teleportation ---
-        for _ in range(2):
-            scroll = Entity()
-            while True:
-                x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
-                if self.game_map.is_walkable(x, y) and not any(
-                        e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
-                        for e in self.entities):
-                    scroll.add_component(PositionComponent(x, y))
-                    break
-            scroll.add_component(RenderComponent('?', COLOR_SCROLL_BLUE))
-            scroll.add_component(
-                ItemComponent(name="Scroll of Teleportation", use_function=teleport, game_map=self.game_map,
-                              entities=self.entities))
-            self.entities.append(scroll)
+            # --- Spawn Scrolls of Teleportation ---
+            for _ in range(2):
+                scroll = Entity()
+                while True:
+                    x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
+                    if self.game_map.is_walkable(x, y) and not any(
+                            e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
+                            for e in self.entities):
+                        scroll.add_component(PositionComponent(x, y))
+                        break
+                scroll.add_component(RenderComponent('?', COLOR_SCROLL_BLUE))
+                scroll.add_component(
+                    ItemComponent(name="Scroll of Teleportation", use_function=teleport, game_map=self.game_map,
+                                  entities=self.entities))
+                self.entities.append(scroll)
 
             # --- Spawn Equipment ---
             # Spawn a Rusty Dagger
@@ -1368,18 +1558,18 @@ class Game:
             armor.add_component(EquippableComponent(slot="armor", defense_bonus=1))
             self.entities.append(armor)
 
-        # --- Spawn Stairs Down ---
-        stairs = Entity()
-        while True:
-            # Ensure stairs are not too close to the player's spawn point for this level.
-            x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
-            distance_to_player = math.sqrt((x - spawn_x) ** 2 + (y - spawn_y) ** 2)
-            if self.game_map.is_walkable(x, y) and distance_to_player > 20:  # Must be at least 20 tiles away
-                stairs.add_component(PositionComponent(x, y))
-                break
-        stairs.add_component(RenderComponent('>', (255, 165, 0)))  # Orange color for visibility
-        stairs.add_component(StairsComponent())
-        self.entities.append(stairs)
+            # --- Spawn Stairs Down ---
+            stairs = Entity()
+            while True:
+                # Ensure stairs are not too close to the player's spawn point for this level.
+                x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
+                distance_to_player = math.sqrt((x - spawn_x) ** 2 + (y - spawn_y) ** 2)
+                if self.game_map.is_walkable(x, y) and distance_to_player > 20:  # Must be at least 20 tiles away
+                    stairs.add_component(PositionComponent(x, y))
+                    break
+            stairs.add_component(RenderComponent('>', (255, 165, 0)))  # Orange color for visibility
+            stairs.add_component(StairsComponent())
+            self.entities.append(stairs)
 
         # A turn manager for the new level's entity list.
         self.turn_manager = TurnManager(game_object=self)
@@ -1566,9 +1756,6 @@ class Game:
                             self.options_menu.rebuild_buttons(self.game_state)
 
             elif self.game_state == GameState.EQUIP_MENU:
-                # --- DIAGNOSTIC PRINT ---
-                print(f"EQUIP_MENU received event: {event}")
-
                 # CONTEXT: The player is managing their equipment.
                 # GOAL: Let the EquipmentMenu handle input and return an action.
                 action = self.equipment_menu.handle_input(event)
@@ -1579,6 +1766,18 @@ class Game:
                         self.equip_item(action["item"])
                         # After equipping, the inventory has changed, so rebuild the options.
                         self.equipment_menu.rebuild_options(self.player)
+
+            elif self.game_state == GameState.DIALOGUE:
+                # In this state, pass all input exclusively to the dialogue viewer.
+                action = self.dialogue_viewer.handle_input(event)
+                if action == "finished":
+                    # When dialogue is over, return control to the player.
+                    self.game_state = GameState.PLAYER_TURN
+
+            elif self.game_state == GameState.VICTORY:
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+                    self.setup_new_game()
+                    self.game_state = GameState.MAIN_MENU
 
             elif self.game_state == GameState.PLAYER_TURN:
                 # CONTEXT: It is the player's turn to act.
@@ -1770,6 +1969,23 @@ class Game:
             # Now, draw specific overlays ON TOP of the game world based on the state.
             if self.game_state == GameState.EQUIP_MENU:
                 self.equipment_menu.draw(self.internal_surface, self.player)
+
+            # Add this new block to draw the dialogue viewer
+            if self.game_state == GameState.DIALOGUE:
+                self.dialogue_viewer.draw(self.internal_surface)
+
+
+            elif self.game_state == GameState.VICTORY:
+                # Draw a simple victory message.
+                victory_font = self.death_font  # Reuse the large font
+                victory_text = victory_font.render("YOU ARE VICTORIOUS", True, (255, 215, 0))  # Gold color
+                text_rect = victory_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 - 30))
+                self.internal_surface.blit(victory_text, text_rect)
+
+                restart_font = self.options_menu.button_font
+                restart_text = restart_font.render("Press Enter to Return to the Menu", True, COLOR_WHITE)
+                restart_rect = restart_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 + 40))
+                self.internal_surface.blit(restart_text, restart_rect)
 
             elif self.game_state == GameState.PLAYER_DEAD:
                 # Set the transparency of our fade surface based on the current alpha.
