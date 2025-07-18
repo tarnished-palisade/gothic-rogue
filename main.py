@@ -1103,6 +1103,12 @@ class DungeonManager:
         self.game = game_instance
         self.dungeon_level = 1
 
+        # Check for the warp cheat upon creation.
+        if "--vampire" in sys.argv:
+            self.dungeon_level = 9
+            # The message should be added via the game's HUD instance.
+            self.game.hud.add_message("CHEAT: Warped to Level 9.", (255, 255, 0))
+
     def next_level(self):
         """Transitions the game to the next dungeon level."""
         self.dungeon_level += 1
@@ -1237,22 +1243,22 @@ class TurnManager:
     def process_attack(self, attacker, defender):
         """Handles the logic for one entity attacking another."""
         # --- God Mode Check ---
-        # If the defender is the player and god mode is active, nullify all damage.
         if defender is self.game.player and self.game.god_mode_active:
-            attacker_char = attacker.get_component(RenderComponent).char
-            self.game.hud.add_message(f"The {attacker_char}'s attack glances off harmlessly.", (200, 200, 200))
-            return  # Exit the method before any damage is calculated.
+            # ... (this part remains the same)
+            return
 
-        # Get the defender's stats component directly, as we need to modify current_hp.
+        # Get the defender's stats first, as it's always needed.
         defender_stats = defender.get_component(StatsComponent)
         if not defender_stats: return
 
-        # Use the new getter methods to calculate effective power and defense.
-        attacker_power = attacker.get_power()
-        defender_defense = defender.get_defense()
-
-        # The core damage formula.
-        damage = attacker_power - defender_defense
+        # --- Power Mode Cheat Check ---
+        if attacker is self.game.player and self.game.power_mode_active:
+            damage = 999
+        else:
+            # --- Original Damage Calculation ---
+            attacker_power = attacker.get_power()
+            defender_defense = defender.get_defense()
+            damage = attacker_power - defender_defense
 
         # Ensure damage is at least 0. We don't want attacks to heal the target.
         if damage < 0:
@@ -1370,36 +1376,37 @@ class Game:
         self.FAST_MOVE_INTERVAL = 0.1
         self.is_in_combat = False
         self.god_mode_active = False
+        self.power_mode_active = False
 
         # --- Pre-declare Game World Attributes ---
         # We define these here with default values so the linter knows they will
-        # always exist on a Game instance. The setup_new_game() method will
-        # then populate them with their actual game-start values.
+        # always exist on a Game instance.
         self.game_map = None
         self.player = None
         self.entities = []
         self.turn_manager = None
         self.dungeon_manager = None
 
-        # Call the setup method to initialize the first game state.
+        # 1. Run the setup method to create the player and managers.
         self.setup_new_game()
 
-        # --- Developer Cheats ---
-        # Check for command-line arguments to enable testing shortcuts.
-        if "--vampire" in sys.argv:
-            # If the --vampire flag is used, start the player on level 9.
-            self.dungeon_manager.dungeon_level = 9
-            self.hud.add_message("CHEAT: Warped to Level 9.", (255, 255, 0))
-
-        # Add this new block for the god mode cheat
+        # 2. Check for and apply developer cheats to the managers.
+        # Add this block for the god mode cheat
         if "--godmode" in sys.argv:
             self.god_mode_active = True
             self.hud.add_message("CHEAT: God Mode Activated.", (255, 215, 0))
+
+        # Add this block for the power mode cheat
+        if "--power" in sys.argv:
+            self.power_mode_active = False  # You will need to add this attribute
+            self.power_mode_active = True
+            self.hud.add_message("CHEAT: Power Mode Activated.", (255, 165, 0))
 
         # --- Developer Cheats Command Line Arguments ---
         # python main.py --vampire (Starts on level 9)
         # python main.py --godmode (Makes you invincible)
         # python main.py --vampire --godmode (Starts on level 9 and makes you invincible)
+        # python main.py --vampire --godmode --power (Starts on level 9, makes you invincible, and gives you 999 power)
 
     def setup_new_game(self):
         """Initializes the game for a new run, creating the player and the first level."""
@@ -1467,9 +1474,9 @@ class Game:
             self.entities.append(vampire)
             # NOTE: No stairs or other items spawn on the boss level, creating a sealed arena.
 
-            # Place the player a few tiles below the Vampire Lord.
+            # Place the player a safe distance below the Vampire Lord, outside its sight range.
             player_pos.x = map_width // 2
-            player_pos.y = map_height // 2 + 5
+            player_pos.y = map_height // 2 + 10  # Increased from 5 to 10
 
         else:
             # --- REGULAR LEVEL ---
@@ -1866,8 +1873,8 @@ class Game:
                             if self.turn_manager.process_player_turn(dx, dy):
                                 action_taken = True
 
-                    # If any valid action resulted in a turn being taken, end the player's turn.
-                    if action_taken:
+                    # If an action was taken AND the game was not won, end the player's turn.
+                    if action_taken and self.game_state != GameState.VICTORY:
                         self.game_state = GameState.ENEMY_TURN
 
     def update(self, delta_time):
@@ -1907,9 +1914,9 @@ class Game:
 
         elif self.game_state == GameState.ENEMY_TURN:
             self.turn_manager.process_enemy_turns()
-            # If the player died during the enemy turn, the state will now be
-            # PLAYER_DEAD. Otherwise, it's now the player's turn.
-            if self.game_state != GameState.PLAYER_DEAD:
+            # If the player died or dialogue started, the state is handled.
+            # Otherwise, it's now the player's turn.
+            if self.game_state != GameState.PLAYER_DEAD and self.game_state != GameState.DIALOGUE:
                 self.game_state = GameState.PLAYER_TURN
 
         elif self.game_state == GameState.EQUIP_MENU:
@@ -1936,7 +1943,7 @@ class Game:
         # If the state is any of the main gameplay states (including the equip menu),
         # we always draw the game world first.
         elif self.game_state in [GameState.PLAYER_TURN, GameState.ENEMY_TURN, GameState.PLAYER_DEAD,
-                                     GameState.EQUIP_MENU]:
+                                 GameState.EQUIP_MENU, GameState.DIALOGUE, GameState.VICTORY]:
             self.camera.update(self.player)
 
             # Draw the game world, entities, and HUD.
@@ -1965,44 +1972,35 @@ class Game:
 
             self.hud.draw(self.internal_surface, self.player, self.dungeon_manager)
 
-            # --- Conditional Overlays ---
-            # Now, draw specific overlays ON TOP of the game world based on the state.
-            if self.game_state == GameState.EQUIP_MENU:
-                self.equipment_menu.draw(self.internal_surface, self.player)
+        # --- Conditional Overlays ---
+        # Now, draw specific overlays ON TOP of the game world based on the state.
+        if self.game_state == GameState.EQUIP_MENU:
+            self.equipment_menu.draw(self.internal_surface, self.player)
+        elif self.game_state == GameState.DIALOGUE:
+            self.dialogue_viewer.draw(self.internal_surface)
+        elif self.game_state == GameState.VICTORY:
+            # Draw a simple victory message.
+            victory_font = self.death_font
+            victory_text = victory_font.render("YOU ARE VICTORIOUS", True, (255, 215, 0))  # Gold color
+            text_rect = victory_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 - 30))
+            self.internal_surface.blit(victory_text, text_rect)
 
-            # Add this new block to draw the dialogue viewer
-            if self.game_state == GameState.DIALOGUE:
-                self.dialogue_viewer.draw(self.internal_surface)
+            restart_font = self.options_menu.button_font
+            restart_text = restart_font.render("Press Enter to Return to the Menu", True, COLOR_WHITE)
+            restart_rect = restart_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 + 40))
+            self.internal_surface.blit(restart_text, restart_rect)
+        elif self.game_state == GameState.PLAYER_DEAD:
 
-
-            elif self.game_state == GameState.VICTORY:
-                # Draw a simple victory message.
-                victory_font = self.death_font  # Reuse the large font
-                victory_text = victory_font.render("YOU ARE VICTORIOUS", True, (255, 215, 0))  # Gold color
-                text_rect = victory_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 - 30))
-                self.internal_surface.blit(victory_text, text_rect)
+            # Only draw the death text and restart prompt after the screen is mostly faded.
+            if self.death_fade_alpha > 200:
+                death_text = self.death_font.render("YOU DIED", True, COLOR_BLOOD_RED)
+                text_rect = death_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 - 30))
+                self.internal_surface.blit(death_text, text_rect)
 
                 restart_font = self.options_menu.button_font
                 restart_text = restart_font.render("Press Enter to Return to the Menu", True, COLOR_WHITE)
                 restart_rect = restart_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 + 40))
                 self.internal_surface.blit(restart_text, restart_rect)
-
-            elif self.game_state == GameState.PLAYER_DEAD:
-                # Set the transparency of our fade surface based on the current alpha.
-                self.death_fade_surface.set_alpha(int(self.death_fade_alpha))
-                # Draw the semi-transparent black surface over the whole screen.
-                self.internal_surface.blit(self.death_fade_surface, (0, 0))
-
-                # Only draw the death text and restart prompt after the screen is mostly faded.
-                if self.death_fade_alpha > 200:
-                    death_text = self.death_font.render("YOU DIED", True, COLOR_BLOOD_RED)
-                    text_rect = death_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 - 30))
-                    self.internal_surface.blit(death_text, text_rect)
-
-                    restart_font = self.options_menu.button_font
-                    restart_text = restart_font.render("Press Enter to Return to the Menu", True, COLOR_WHITE)
-                    restart_rect = restart_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 + 40))
-                    self.internal_surface.blit(restart_text, restart_rect)
 
         # --- Always-on-Top Drawing ---
         # Draw the FPS counter in ANY state, if enabled.
