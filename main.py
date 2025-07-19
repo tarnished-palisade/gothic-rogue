@@ -8,6 +8,7 @@ from enum import Enum, auto
 import json
 import os
 import math
+from typing import Dict, Any, Callable
 
 # ==============================================================================
 # I. Settings Manager (Principle: Preservation Axiom)
@@ -47,7 +48,59 @@ class SettingsManager:
         self.settings[key] = value
 
 # ==============================================================================
-# II. Configuration and Constants (Principle: Change-Resilient)
+# II. Item Functions
+# These are standalone functions that define the effects of usable items.
+# ==============================================================================
+
+def heal(**kwargs):
+    """Heals an entity by a given amount."""
+    entity = kwargs.get("entity")
+    amount = kwargs.get("amount")
+
+    if not entity or not amount:
+        return
+
+    stats = entity.get_component(StatsComponent)
+    if stats:
+        stats.current_hp += amount
+        # Prevent overhealing.
+        if stats.current_hp > stats.max_hp:
+            stats.current_hp = stats.max_hp
+
+def teleport(**kwargs):
+    """Finds a random, valid, unoccupied tile and moves the entity there."""
+    entity = kwargs.get("entity")
+    game_map = kwargs.get("game_map")
+    entities = kwargs.get("entities")
+
+    # Defensive check to ensure all necessary data is present.
+    if not entity or not game_map or not entities:
+        return
+
+    # 1. Create a list of all possible floor tiles on the map.
+    possible_locations = []
+    for y, row in enumerate(game_map.tiles):
+        for x, tile in enumerate(row):
+            if tile != '#':  # Any tile that is not a wall is a potential destination.
+                possible_locations.append((x, y))
+
+    # 2. Shuffle the list to ensure the destination is random.
+    random.shuffle(possible_locations)
+
+    # 3. Find the first valid, unoccupied tile from the shuffled list.
+    for loc in possible_locations:
+        x, y = loc
+        # Check if any other entity is already at this location.
+        if not any(e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y for e in entities if e is not entity):
+            # Found a safe spot. Move the entity.
+            pos = entity.get_component(PositionComponent)
+            if pos:
+                pos.x = x
+                pos.y = y
+            return  # Exit the function after successfully teleporting.
+
+# ==============================================================================
+# III. Configuration and Constants (Principle: Change-Resilient)
 # ==============================================================================
 
 # An instance of the SettingsManager to handle loading saved preferences.
@@ -114,9 +167,6 @@ COLOR_XP_BLUE = (100, 150, 255) # A vibrant blue for the experience bar.
 BASE_XP_TO_LEVEL = 100 # XP needed for the first level up.
 LEVEL_UP_FACTOR = 1.5  # The scaling exponent for leveling.
 
-# --- Boss Configuration ---
-VAMPIRE_LEVEL = 10 # The dungeon level where the Vampire Lord appears.
-
 # --- Font and Tile Settings ---
 # The name of the monospaced font to be used for all game text.
 # 'Consolas' is chosen for its clarity and classic roguelike feel.
@@ -127,8 +177,109 @@ FONT_NAME = 'Consolas'
 # screen positions for rendering.
 TILE_SIZE = 16
 
+# --- Game Parameters ---
+# This section centralizes all tunable gameplay values.
+MAP_WIDTH, MAP_HEIGHT = 100, 100
+STAIRS_MIN_DISTANCE_FROM_SPAWN = 20
+
+# --- AI Tuning ---
+AI_SIGHT_RADIUS = 8
+AI_FORGET_PLAYER_TURNS = 5  # Turns until an ACTIVE AI returns to IDLE
+AI_IDLE_ACTION_CHANCE = 5   # Percentage chance for an IDLE AI to do nothing
+
+# --- Procedural Generation Tuning ---
+PROCGEN_INITIAL_WALL_CHANCE = 45  # Percentage
+PROCGEN_SIMULATION_STEPS = 4
+PROCGEN_RUBBLE_CHANCE = 5         # Percentage
+
+# --- Boss Configuration ---
+VAMPIRE_LEVEL = 10 # The dungeon level where the Vampire Lord appears.
+VAMPIRE_SPAWN_OFFSET_Y = 10 # How far below the center the player spawns
+
+# --- UI Layout & Animation ---
+# Centralizes constants for positioning and animating UI elements.
+TITLE_Y_POS = 150
+TITLE_FLICKER_BASE = 190
+TITLE_FLICKER_AMP = 65
+TITLE_FLICKER_SPEED = 5
+
+MENU_BUTTON_START_Y = 250
+MENU_BUTTON_SPACING = 60
+
+OPTIONS_BUTTON_START_Y = 200
+
+HELP_MENU_MARGIN = 40
+HELP_MENU_LINE_SPACING = 20
+HELP_MENU_WOBBLE_SPEED = 4
+HELP_MENU_WOBBLE_HEIGHT = 3
+
+DIALOGUE_PANEL_HEIGHT = 100
+DIALOGUE_PANEL_MARGIN_X = 50
+DIALOGUE_PANEL_MARGIN_Y = 30
+
+DEATH_FADE_SPEED = 85
+DEATH_TEXT_FADE_THRESHOLD = 200 # Alpha value at which death text appears
+
+# --- Entity Data Definitions ---
+# Centralizes the base stats and properties for all non-player entities.
+# This makes balancing easier and moves data out of the game logic functions.
+ENTITY_DATA = {
+    "rat": {
+        "char": "r", "color": COLOR_ENTITY_WHITE,
+        "stats": {"hp": 5, "power": 2, "defense": 0, "speed": 1, "xp_reward": 5}
+    },
+    "ghoul": {
+        "char": "g", "color": COLOR_CORPSE_PALE,
+        "stats": {"hp": 12, "power": 4, "defense": 1, "speed": 1, "xp_reward": 20}
+    },
+    "skeleton": {
+        "char": "s", "color": COLOR_BONE_WHITE,
+        "stats": {"hp": 8, "power": 3, "defense": 2, "speed": 2, "xp_reward": 15}
+    },
+    "vampire_lord": {
+        "char": "V", "color": COLOR_BLOOD_RED,
+        "stats": {"hp": 100, "power": 10, "defense": 5, "speed": 1, "xp_reward": 1000}
+    }
+}
+
+# --- Item Data Definitions ---
+ITEM_DATA = {
+    "health_potion": {
+        "spawn_key": "potion", # ADD THIS
+        "char": "!", "color": COLOR_HEALING_RED, "name": "Health Potion",
+        "use_function": heal, "kwargs": {"amount": 15}
+    },
+    "teleport_scroll": {
+        "spawn_key": "scroll", # ADD THIS
+        "char": "?", "color": COLOR_SCROLL_BLUE, "name": "Scroll of Teleportation",
+        "use_function": teleport
+    },
+    "rusty_dagger": {
+        "spawn_key": "dagger", # ADD THIS
+        "char": ")", "color": (139, 137, 137), "name": "Rusty Dagger",
+        "equip": {"slot": "weapon", "power_bonus": 2}
+    },
+    "leather_armor": {
+        "spawn_key": "armor", # ADD THIS
+        "char": "[", "color": (139, 69, 19), "name": "Leather Armor",
+        "equip": {"slot": "armor", "defense_bonus": 1}
+    }
+}
+
+# --- Spawn Rate Definitions ---
+# Defines the base number and per-level scaling factor for entity spawns.
+SPAWN_RATES = {
+    "rat":      {"base": 10, "scaling": 2},
+    "ghoul":    {"base": 3,  "scaling": 1},
+    "skeleton": {"base": 4,  "scaling": 0.5},
+    "potion":   {"base": 5,  "scaling": -0.5, "min": 1},
+    "scroll":   {"base": 2,  "scaling": 0},
+    "dagger":   {"base": 1,  "scaling": 0},
+    "armor":    {"base": 1,  "scaling": 0}
+}
+
 # ==============================================================================
-# III. State Management (Principle: Coherence)
+# IV. State Management (Principle: Coherence)
 # ==============================================================================
 
 class GameState(Enum):
@@ -151,7 +302,7 @@ class GameState(Enum):
     ENEMY_TURN = auto()  # The game is processing the actions of all enemies.
 
 # ==============================================================================
-# IV. UI Classes (Principle: Modularity)
+# V. UI Classes (Principle: Modularity)
 # ==============================================================================
 
 class Button:
@@ -179,9 +330,9 @@ class Menu:
         self.button_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 30)
 
         self.buttons = [
-            Button(250, "Start Game", self.button_font, GameState.PLAYER_TURN),
-            Button(310, "Options", self.button_font, GameState.OPTIONS_ROOT),
-            Button(370, "Quit", self.button_font, GameState.QUIT)
+            Button(MENU_BUTTON_START_Y, "Start Game", self.button_font, GameState.PLAYER_TURN),
+            Button(MENU_BUTTON_START_Y + MENU_BUTTON_SPACING, "Options", self.button_font, GameState.OPTIONS_ROOT),
+            Button(MENU_BUTTON_START_Y + (MENU_BUTTON_SPACING * 2), "Quit", self.button_font, GameState.QUIT)
         ]
         self.selected_index = 0
         self.buttons[self.selected_index].is_selected = True
@@ -209,12 +360,12 @@ class Menu:
     def draw(self, surface):
         """Draws all elements of the main menu."""
         # Calculate a flickering color for the title using a sine wave.
-        flicker = 190 + 65 * math.sin(self.title_flicker_timer * 5)
+        flicker = TITLE_FLICKER_BASE + TITLE_FLICKER_AMP * math.sin(self.title_flicker_timer * TITLE_FLICKER_SPEED)
         title_color = (int(flicker), int(flicker), int(flicker))
 
         title_text = "Gothic Rogue"
         title_surface = self.title_font.render(title_text, True, title_color)
-        title_rect = title_surface.get_rect(center=(INTERNAL_WIDTH / 2, 150))
+        title_rect = title_surface.get_rect(center=(INTERNAL_WIDTH / 2, TITLE_Y_POS))
         surface.blit(title_surface, title_rect)
 
         for button in self.buttons:
@@ -239,7 +390,7 @@ class OptionsMenu:
     def rebuild_buttons(self, game_state: GameState):
         """Clears and rebuilds the button list based on the current game state."""
         self.buttons.clear()
-        y_offset = 200  # Starting Y position for buttons
+        y_offset = OPTIONS_BUTTON_START_Y  # Starting Y position for buttons
 
         if game_state == GameState.OPTIONS_ROOT:
             # --- Main Options Categories ---
@@ -451,11 +602,10 @@ class HelpMenu:
 
     def update(self, delta_time):
         """Updates the animation timer."""
-        self.animation_timer += delta_time * 4  # Speed up the wobble effect
+        self.animation_timer += delta_time * HELP_MENU_WOBBLE_SPEED
 
     def draw(self, surface):
         """Draws the help menu icon or the full list of keybindings."""
-        margin = 40 # Increased margin to shift the menu up
         if self.is_open:
             # --- Draw the full help text ---
             # Add the instruction to close the menu to the list dynamically.
@@ -463,22 +613,21 @@ class HelpMenu:
 
             for i, text in enumerate(reversed(full_text_list)):
                 text_surface = self.font.render(text, True, COLOR_WHITE)
-                x_pos = INTERNAL_WIDTH - text_surface.get_width() - margin
+                x_pos = INTERNAL_WIDTH - text_surface.get_width() - HELP_MENU_MARGIN
                 # Draw from the bottom up.
-                y_pos = INTERNAL_HEIGHT - text_surface.get_height() - margin - (i * 20)
+                y_pos = INTERNAL_HEIGHT - text_surface.get_height() - HELP_MENU_MARGIN - (i * HELP_MENU_LINE_SPACING)
                 surface.blit(text_surface, (x_pos, y_pos))
         else:
             # --- Draw the 'i' icon ---
             y_offset = 0
             # Only apply the wobble animation if the menu has never been opened.
             if not self.has_been_opened_once:
-                y_offset = int(math.sin(self.animation_timer) * 3)  # 3-pixel bounce
+                y_offset = int(math.sin(self.animation_timer) * HELP_MENU_WOBBLE_HEIGHT)
 
             text_surface = self.font.render("[i]", True, COLOR_WHITE)
-            x_pos = INTERNAL_WIDTH - text_surface.get_width() - margin
-            y_pos = INTERNAL_HEIGHT - text_surface.get_height() - margin + y_offset
+            x_pos = INTERNAL_WIDTH - text_surface.get_width() - HELP_MENU_MARGIN
+            y_pos = INTERNAL_HEIGHT - text_surface.get_height() - HELP_MENU_MARGIN + y_offset
             surface.blit(text_surface, (x_pos, y_pos))
-
 
 class DialogueViewer:
     """
@@ -534,8 +683,11 @@ class DialogueViewer:
             return
 
         # --- Draw Background Panel ---
-        panel_height = 100
-        panel_rect = pygame.Rect(50, INTERNAL_HEIGHT - panel_height - 30, INTERNAL_WIDTH - 100, panel_height)
+        panel_width = INTERNAL_WIDTH - (DIALOGUE_PANEL_MARGIN_X * 2)
+        panel_x = DIALOGUE_PANEL_MARGIN_X
+        panel_y = INTERNAL_HEIGHT - DIALOGUE_PANEL_HEIGHT - DIALOGUE_PANEL_MARGIN_Y
+
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, DIALOGUE_PANEL_HEIGHT)
 
         # Create a semi-transparent surface for the panel
         panel_surface = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
@@ -551,58 +703,6 @@ class DialogueViewer:
         current_line = self.dialogue_lines[self.current_line_index]
         text_surface = self.font.render(current_line, True, COLOR_WHITE)
         surface.blit(text_surface, (panel_rect.x + 20, panel_rect.y + 45))
-
-# ==============================================================================
-# V. Item Functions
-# These are standalone functions that define the effects of usable items.
-# ==============================================================================
-
-def heal(**kwargs):
-    """Heals an entity by a given amount."""
-    entity = kwargs.get("entity")
-    amount = kwargs.get("amount")
-
-    if not entity or not amount:
-        return
-
-    stats = entity.get_component(StatsComponent)
-    if stats:
-        stats.current_hp += amount
-        # Prevent overhealing.
-        if stats.current_hp > stats.max_hp:
-            stats.current_hp = stats.max_hp
-
-def teleport(**kwargs):
-    """Finds a random, valid, unoccupied tile and moves the entity there."""
-    entity = kwargs.get("entity")
-    game_map = kwargs.get("game_map")
-    entities = kwargs.get("entities")
-
-    # Defensive check to ensure all necessary data is present.
-    if not entity or not game_map or not entities:
-        return
-
-    # 1. Create a list of all possible floor tiles on the map.
-    possible_locations = []
-    for y, row in enumerate(game_map.tiles):
-        for x, tile in enumerate(row):
-            if tile != '#':  # Any tile that is not a wall is a potential destination.
-                possible_locations.append((x, y))
-
-    # 2. Shuffle the list to ensure the destination is random.
-    random.shuffle(possible_locations)
-
-    # 3. Find the first valid, unoccupied tile from the shuffled list.
-    for loc in possible_locations:
-        x, y = loc
-        # Check if any other entity is already at this location.
-        if not any(e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y for e in entities if e is not entity):
-            # Found a safe spot. Move the entity.
-            pos = entity.get_component(PositionComponent)
-            if pos:
-                pos.x = x
-                pos.y = y
-            return  # Exit the function after successfully teleporting.
 
 # ==============================================================================
 # VI. Entity-Component System (ECS) (Principle: Modularity)
@@ -653,7 +753,7 @@ class AIComponent(Component):
     - Effect: Creates dynamic, responsive enemies that can hunt the player.
     """
 
-    def __init__(self, sight_radius=8, is_stationary=False):
+    def __init__(self, sight_radius=AI_SIGHT_RADIUS, is_stationary=False):
         super().__init__()
         self.state = 'IDLE'
         self.sight_radius = sight_radius
@@ -690,7 +790,7 @@ class AIComponent(Component):
             self.turns_since_player_seen = 0
         else:
             self.turns_since_player_seen += 1
-            if self.turns_since_player_seen >= 5:
+            if self.turns_since_player_seen >= AI_FORGET_PLAYER_TURNS:
                 self.state = 'IDLE'
 
         # --- Action Logic based on State ---
@@ -702,7 +802,7 @@ class AIComponent(Component):
             return  # End turn after attacking or doing nothing.
 
         if self.state == 'ACTIVE':
-            if random.randint(1, 100) <= 5:
+            if random.randint(1, 100) <= AI_IDLE_ACTION_CHANCE:
                 return
 
             if distance_to_player <= 1:
@@ -777,12 +877,12 @@ class ItemComponent(Component):
     - use_function: The function to call when the item is used.
     - kwargs: A dictionary of arguments to pass to the use function.
     """
-    def __init__(self, name, use_function=None, **kwargs):
+    def __init__(self, name: str, use_function: Callable = None, kwargs: Dict[str, Any] = None):
         super().__init__()
         self.name = name
         self.use_function = use_function
         # Store any additional data the use_function might need.
-        self.kwargs = kwargs
+        self.kwargs = kwargs if kwargs is not None else {}
 
 class ExperienceComponent(Component):
     """
@@ -994,14 +1094,14 @@ class ProceduralCaveGenerator:
         tiles = [['.' for _ in range(width)] for _ in range(height)]
         for y in range(height):
             for x in range(width):
-                if random.randint(1, 100) < 45:
+                if random.randint(1, 100) < PROCGEN_INITIAL_WALL_CHANCE:  # Use constant
                     tiles[y][x] = '#'
 
         # --- Step 2: Run the Simulation to Form Caves ---
         # The simulation step is run multiple times. Each run smooths the noise
         # further, connecting walls and opening up caverns. 4-5 iterations is
         # typically enough to achieve a stable, organic-looking result.
-        for _ in range(4):
+        for _ in range(PROCGEN_SIMULATION_STEPS):  # Use constant
             tiles = ProceduralCaveGenerator._simulation_step(tiles)
 
         # --- Step 3: Enforce a Solid Border ---
@@ -1021,7 +1121,7 @@ class ProceduralCaveGenerator:
         for y in range(height):
             for x in range(width):
                 if tiles[y][x] == '.':
-                    if random.randint(1, 100) <= 5:
+                    if random.randint(1, 100) <= PROCGEN_RUBBLE_CHANCE:  # Use constant
                         tiles[y][x] = ','
 
         return tiles
@@ -1118,26 +1218,35 @@ class DungeonManager:
 
     def get_entity_spawn_counts(self):
         """
-        Calculates the number of enemies and items to spawn based on the current dungeon level.
-        - Necessity: To create a scalable difficulty curve, making deeper levels more challenging.
-        - Function: Returns a dictionary with the calculated counts for each entity type.
-        - Effect: The game's challenge increases organically as the player progresses.
+        Calculates entity spawn counts based on defined rates and dungeon level.
+        - Necessity: To create a scalable difficulty curve using a centralized data source.
+        - Function: Iterates through SPAWN_RATES to calculate counts for each entity.
+        - Effect: The game's challenge increases organically and is easily tunable.
         """
-        num_rats = 10 + (self.dungeon_level * 2)
-        num_ghouls = 3 + self.dungeon_level
-        num_skeletons = 4 + int(self.dungeon_level / 2)
-        num_potions = 5 - int(self.dungeon_level / 2)
+        counts = {}
+        # We need to spawn scrolls, daggers, and armor as well, but their spawn
+        # counts are currently handled elsewhere. Let's consolidate.
+        # The keys here must match the keys in the SPAWN_RATES dictionary.
+        items_to_spawn = ["rat", "ghoul", "skeleton", "potion", "scroll", "dagger", "armor"]
 
-        # Ensure potions don't disappear completely on very deep levels.
-        if num_potions < 1:
-            num_potions = 1
+        for name in items_to_spawn:
+            rates = SPAWN_RATES.get(name)
+            if not rates:
+                continue  # Skip if no spawn rate is defined for this name
 
-        return {
-            "rat": num_rats,
-            "ghoul": num_ghouls,
-            "skeleton": num_skeletons,
-            "potion": num_potions
-        }
+            count = int(rates["base"] + (self.dungeon_level * rates["scaling"]))
+
+            # Enforce a minimum count if specified (e.g., for potions)
+            min_count = rates.get("min", 0)
+            if count < min_count:
+                count = min_count
+
+            # Ensure count doesn't go below zero for items with negative scaling
+            if count < 0:
+                count = 0
+
+            counts[name] = count
+        return counts
 
 class TurnManager:
     """
@@ -1430,35 +1539,26 @@ class Game:
 
     def generate_new_level(self):
         """Creates a new map, places the player, and spawns entities based on dungeon level."""
-        # --- Get Dynamic Spawn Counts from Manager ---
         spawn_counts = self.dungeon_manager.get_entity_spawn_counts()
+        self.game_map = Map(MAP_WIDTH, MAP_HEIGHT)
 
-        # --- Map and Entity List Initialization ---
-        map_width, map_height = 100, 100
-        self.game_map = Map(map_width, map_height)
-
-        # Place the player at the new level's spawn point.
         spawn_x, spawn_y = self.game_map.spawn_point
         player_pos = self.player.get_component(PositionComponent)
         player_pos.x = spawn_x
         player_pos.y = spawn_y
 
-        # Reset entity list with only the player.
         self.entities = [self.player]
 
-        # --- Populate the Level ---
         if self.dungeon_manager.dungeon_level == VAMPIRE_LEVEL:
             # --- BOSS LEVEL ---
-            # On the final level, spawn only the Vampire Lord in the center.
+            v_data = ENTITY_DATA["vampire_lord"]
             vampire = Entity()
-            vampire.add_component(PositionComponent(map_width // 2, map_height // 2))
-            vampire.add_component(RenderComponent('V', COLOR_BLOOD_RED))
-            vampire.add_component(StatsComponent(hp=100, power=10, defense=5, speed=1, xp_reward=1000))
-            vampire.add_component(AIComponent(is_stationary=True)) # The AI component is added for sight checks.
+            vampire.add_component(PositionComponent(MAP_WIDTH // 2, MAP_HEIGHT // 2))
+            vampire.add_component(RenderComponent(v_data["char"], v_data["color"]))
+            vampire.add_component(StatsComponent(**v_data["stats"]))
+            vampire.add_component(AIComponent(is_stationary=True))
             vampire.add_component(VampireComponent())
-            vampire.add_component(TurnTakerComponent()) # The boss needs a turn for its logic to run.
-
-            # Add the Dialogue Component with your custom dialogue.
+            vampire.add_component(TurnTakerComponent())
             vampire.add_component(DialogueComponent(
                 speaker_name="Vampire Lord",
                 dialogue_lines=[
@@ -1472,113 +1572,72 @@ class Game:
                 ]
             ))
             self.entities.append(vampire)
-            # NOTE: No stairs or other items spawn on the boss level, creating a sealed arena.
-
-            # Place the player a safe distance below the Vampire Lord, outside its sight range.
-            player_pos.x = map_width // 2
-            player_pos.y = map_height // 2 + 10  # Increased from 5 to 10
-
+            player_pos.x = MAP_WIDTH // 2
+            player_pos.y = MAP_HEIGHT // 2 + VAMPIRE_SPAWN_OFFSET_Y
         else:
             # --- REGULAR LEVEL ---
-            # --- Spawn Entities Based on Counts ---
-            entity_data = {
-                "rat": (spawn_counts["rat"], 'r', COLOR_ENTITY_WHITE, StatsComponent(hp=2, power=1, defense=0, speed=1, xp_reward=5)),
-                "ghoul": (spawn_counts["ghoul"], 'g', COLOR_CORPSE_PALE,
-                          StatsComponent(hp=10, power=2, defense=2, speed=1, xp_reward=20)),
-                "skeleton": (spawn_counts["skeleton"], 's', COLOR_BONE_WHITE,
-                             StatsComponent(hp=5, power=1, defense=1, speed=2, xp_reward=15))
-            }
-
-            for data in entity_data.values():
-                count, char, color, stats = data
+            # --- Spawn Enemies ---
+            for entity_name in ["rat", "ghoul", "skeleton"]:
+                count = spawn_counts.get(entity_name, 0)
+                data = ENTITY_DATA[entity_name]
                 for _ in range(count):
                     entity = Entity()
                     while True:
-                        x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
+                        x, y = random.randint(1, MAP_WIDTH - 2), random.randint(1, MAP_HEIGHT - 2)
                         if self.game_map.is_walkable(x, y) and not any(
                                 e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
                                 for e in self.entities):
                             entity.add_component(PositionComponent(x, y))
                             break
-                    entity.add_component(RenderComponent(char, color))
+                    entity.add_component(RenderComponent(data["char"], data["color"]))
                     entity.add_component(TurnTakerComponent())
                     entity.add_component(AIComponent())
-                    entity.add_component(stats)
+                    entity.add_component(StatsComponent(**data["stats"]))
                     self.entities.append(entity)
 
-            # --- Spawn Potion ---
-            for _ in range(spawn_counts["potion"]):
-                potion = Entity()
-                while True:
-                    x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
-                    if self.game_map.is_walkable(x, y) and not any(
-                            e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
-                            for e in self.entities):
-                        potion.add_component(PositionComponent(x, y))
-                        break
-                potion.add_component(RenderComponent('!', COLOR_HEALING_RED))
-                potion.add_component(ItemComponent(name="Health Potion", use_function=heal, amount=15))
-                self.entities.append(potion)
+            # --- Spawn Items & Equipment ---
+            for item_name, data in ITEM_DATA.items():
+                spawn_key = data["spawn_key"]
+                count = spawn_counts.get(spawn_key, 0)
+                for _ in range(count):
+                    item = Entity()
+                    while True:
+                        x, y = random.randint(1, MAP_WIDTH - 2), random.randint(1, MAP_HEIGHT - 2)
+                        if self.game_map.is_walkable(x, y) and not any(
+                                e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
+                                for e in self.entities):
+                            item.add_component(PositionComponent(x, y))
+                            break
+                    item.add_component(RenderComponent(data["char"], data["color"]))
 
-            # --- Spawn Scrolls of Teleportation ---
-            for _ in range(2):
-                scroll = Entity()
-                while True:
-                    x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
-                    if self.game_map.is_walkable(x, y) and not any(
-                            e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
-                            for e in self.entities):
-                        scroll.add_component(PositionComponent(x, y))
-                        break
-                scroll.add_component(RenderComponent('?', COLOR_SCROLL_BLUE))
-                scroll.add_component(
-                    ItemComponent(name="Scroll of Teleportation", use_function=teleport, game_map=self.game_map,
-                                  entities=self.entities))
-                self.entities.append(scroll)
+                    # Build the kwargs dictionary for the ItemComponent
+                    final_kwargs = data.get("kwargs", {}).copy()
+                    if item_name == "teleport_scroll":
+                        # noinspection PyTypeChecker
+                        final_kwargs.update({"game_map": self.game_map, "entities": self.entities})
 
-            # --- Spawn Equipment ---
-            # Spawn a Rusty Dagger
-            dagger = Entity()
-            while True:
-                x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
-                if self.game_map.is_walkable(x, y) and not any(
-                        e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
-                        for e in self.entities):
-                    dagger.add_component(PositionComponent(x, y))
-                    break
-            dagger.add_component(RenderComponent(')', (139, 137, 137)))  # A dull grey color
-            dagger.add_component(ItemComponent(name="Rusty Dagger"))
-            dagger.add_component(EquippableComponent(slot="weapon", power_bonus=2))
-            self.entities.append(dagger)
+                    item.add_component(
+                        ItemComponent(name=data["name"], use_function=data.get("use_function"), kwargs=final_kwargs)
+                    )
 
-            # Spawn Leather Armor
-            armor = Entity()
-            while True:
-                x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
-                if self.game_map.is_walkable(x, y) and not any(
-                        e.get_component(PositionComponent).x == x and e.get_component(PositionComponent).y == y
-                        for e in self.entities):
-                    armor.add_component(PositionComponent(x, y))
-                    break
-            armor.add_component(RenderComponent('[', (139, 69, 19)))  # A brown color
-            armor.add_component(ItemComponent(name="Leather Armor"))
-            armor.add_component(EquippableComponent(slot="armor", defense_bonus=1))
-            self.entities.append(armor)
+                    # Add EquippableComponent if it exists
+                    if "equip" in data:
+                        item.add_component(EquippableComponent(**data["equip"]))
+
+                    self.entities.append(item)
 
             # --- Spawn Stairs Down ---
             stairs = Entity()
             while True:
-                # Ensure stairs are not too close to the player's spawn point for this level.
-                x, y = random.randint(1, map_width - 2), random.randint(1, map_height - 2)
+                x, y = random.randint(1, MAP_WIDTH - 2), random.randint(1, MAP_HEIGHT - 2)
                 distance_to_player = math.sqrt((x - spawn_x) ** 2 + (y - spawn_y) ** 2)
-                if self.game_map.is_walkable(x, y) and distance_to_player > 20:  # Must be at least 20 tiles away
+                if self.game_map.is_walkable(x, y) and distance_to_player > STAIRS_MIN_DISTANCE_FROM_SPAWN:
                     stairs.add_component(PositionComponent(x, y))
                     break
-            stairs.add_component(RenderComponent('>', (255, 165, 0)))  # Orange color for visibility
+            stairs.add_component(RenderComponent('>', (255, 165, 0)))
             stairs.add_component(StairsComponent())
             self.entities.append(stairs)
 
-        # A turn manager for the new level's entity list.
         self.turn_manager = TurnManager(game_object=self)
 
     def run(self):
@@ -1924,7 +1983,7 @@ class Game:
 
         elif self.game_state == GameState.PLAYER_DEAD:
             # If the player is dead, we only update the fade-to-black animation.
-            self.death_fade_alpha += self.death_fade_speed * delta_time
+            self.death_fade_alpha += DEATH_FADE_SPEED * delta_time  # Use constant
             if self.death_fade_alpha > 255:
                 self.death_fade_alpha = 255
 
@@ -1989,11 +2048,17 @@ class Game:
             restart_text = restart_font.render("Press Enter to Return to the Menu", True, COLOR_WHITE)
             restart_rect = restart_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 + 40))
             self.internal_surface.blit(restart_text, restart_rect)
+
         elif self.game_state == GameState.PLAYER_DEAD:
+            # Set the transparency of our fade surface based on the current alpha.
+            self.death_fade_surface.set_alpha(int(self.death_fade_alpha))
+            # Draw the semi-transparent black surface over the whole screen.
+            self.internal_surface.blit(self.death_fade_surface, (0, 0))
 
             # Only draw the death text and restart prompt after the screen is mostly faded.
-            if self.death_fade_alpha > 200:
+            if self.death_fade_alpha > DEATH_TEXT_FADE_THRESHOLD:  # Use constant
                 death_text = self.death_font.render("YOU DIED", True, COLOR_BLOOD_RED)
+                # ...
                 text_rect = death_text.get_rect(center=(INTERNAL_WIDTH / 2, INTERNAL_HEIGHT / 2 - 30))
                 self.internal_surface.blit(death_text, text_rect)
 
