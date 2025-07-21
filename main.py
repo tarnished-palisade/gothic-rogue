@@ -9,7 +9,7 @@ import json
 import os
 import math
 from typing import Dict, Any, Callable
-
+from datetime import datetime
 
 # ==============================================================================
 # I. Settings Manager (Principle: Preservation Axiom)
@@ -1213,6 +1213,7 @@ class DungeonManager:
         if "--vampire" in sys.argv:
             self.dungeon_level = 9
             # The message should be added via the game's HUD instance.
+            GameLogger.log("Warp cheat activated.", "CHEAT")  # Use the logger
             self.game.hud.add_message("CHEAT: Warped to Level 9.", (255, 255, 0))
 
     def next_level(self):
@@ -1359,7 +1360,6 @@ class TurnManager:
         """Handles the logic for one entity attacking another."""
         # --- God Mode Check ---
         if defender is self.game.player and self.game.god_mode_active:
-            # ... (this part remains the same)
             return
 
         # Get the defender's stats first, as it's always needed.
@@ -1414,6 +1414,7 @@ class TurnManager:
         self.game.hud.add_message(f"The {char} is slain!", COLOR_MESSAGE_DEFAULT)
 
         if entity is self.player:
+            GameLogger.log(f"Player died on dungeon level {self.game.dungeon_manager.dungeon_level}.", "EVENT")
             self.game.game_state = GameState.PLAYER_DEAD
         else:
             # --- Victory Condition Check ---
@@ -1509,12 +1510,14 @@ class Game:
         # Add this block for the god mode cheat
         if "--godmode" in sys.argv:
             self.god_mode_active = True
+            GameLogger.log("God Mode cheat activated.", "CHEAT")  # Use the logger
             self.hud.add_message("CHEAT: God Mode Activated.", (255, 215, 0))
 
         # Add this block for the power mode cheat
         if "--power" in sys.argv:
             self.power_mode_active = False  # You will need to add this attribute
             self.power_mode_active = True
+            GameLogger.log("Power Mode cheat activated.", "CHEAT")  # Use the logger
             self.hud.add_message("CHEAT: Power Mode Activated.", (255, 165, 0))
 
         # --- Developer Cheats Command Line Arguments ---
@@ -2323,6 +2326,25 @@ class FPSCounter:
         y_pos = 10
 
         surface.blit(text_surface, (x_pos, y_pos))
+
+class GameLogger:
+    """Simple logging system for tracking game events and errors."""
+    LOG_FILE = "gothic_rogue_log.txt"
+
+    @staticmethod
+    def log(message, level="INFO"):
+        """Logs a message to the console and a file."""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_message = f"[{timestamp}] [{level}] {message}"
+
+        print(log_message)  # Continue printing to console for live feedback
+
+        try:
+            with open(GameLogger.LOG_FILE, "a") as f:
+                f.write(log_message + "\n")
+        except Exception as e:
+            # Don't crash the game if logging fails, just report it
+            print(f"CRITICAL: GameLogger failed to write to file: {e}")
 
 # ==============================================================================
 # XII. Entry Point
