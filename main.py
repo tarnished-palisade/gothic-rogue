@@ -10,6 +10,7 @@ import os
 import math
 from typing import Dict, Any, Callable
 
+
 # ==============================================================================
 # I. Settings Manager (Principle: Preservation Axiom)
 # ==============================================================================
@@ -17,24 +18,29 @@ from typing import Dict, Any, Callable
 class SettingsManager:
     """Manages loading and saving game settings to a JSON file."""
 
-    def __init__(self):
+    # Add 'resolutions_list' as an argument
+    def __init__(self, resolutions_list):
+        self.resolutions = resolutions_list  # Store the list internally
         self.filepath = "gothic_rogue_settings.json"
         self.settings = self.load_settings()
 
     def load_settings(self):
         """Loads settings from the JSON file, or returns defaults."""
         if os.path.exists(self.filepath):
-            with open(self.filepath, 'r') as f:
-                # Make sure to load existing settings and add new ones if they are missing
-                settings = json.load(f)
-                if 'show_fps' not in settings:
-                    settings['show_fps'] = False
-                return settings
-        # This is the default configuration for a first-time launch.
-        return {
-            "resolution_index": 0,
-            "show_fps": False # Default to off.
-        }
+            try:
+                with open(self.filepath, 'r') as f:
+                    settings = json.load(f)
+                    if 'show_fps' not in settings:
+                        settings['show_fps'] = False
+
+                    res_index = settings.get("resolution_index", 0)
+                    # Use the stored list 'self.resolutions'
+                    if not isinstance(res_index, int) or not 0 <= res_index < len(self.resolutions):
+                        settings["resolution_index"] = 0
+                    return settings
+            except (json.JSONDecodeError, FileNotFoundError):
+                return {"resolution_index": 0, "show_fps": False}
+        return {"resolution_index": 0, "show_fps": False}
 
     def save_settings(self):
         """Saves the current settings to the JSON file."""
@@ -103,12 +109,12 @@ def teleport(**kwargs):
 # III. Configuration and Constants (Principle: Change-Resilient)
 # ==============================================================================
 
-# An instance of the SettingsManager to handle loading saved preferences.
-settings_manager = SettingsManager()
-
 # --- Display Settings ---
 # A list of all available screen resolutions for the player to choose from.
 resolutions = [(800, 600), (1024, 768), (1280, 960), (1600, 1200), (2048, 1536)]
+
+# Move the creation of settings_manager here and pass 'resolutions' to it
+settings_manager = SettingsManager(resolutions)
 
 # Load the player's previously saved resolution choice.
 current_resolution_index = settings_manager.get("resolution_index")
