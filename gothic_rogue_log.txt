@@ -2,3 +2,5 @@
 [2025-07-20 17:42:31] [CHEAT] Warp cheat activated.
 [2025-07-20 17:42:31] [CHEAT] God Mode cheat activated.
 [2025-07-20 17:42:31] [CHEAT] Power Mode cheat activated.
+[2025-07-21 19:56:39] [EVENT] Player died on dungeon level 1.
+[2025-07-21 19:56:39] [EVENT] Player died on dungeon level 1.

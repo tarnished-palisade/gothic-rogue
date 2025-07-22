@@ -232,15 +232,15 @@ DEATH_TEXT_FADE_THRESHOLD = 200 # Alpha value at which death text appears
 ENTITY_DATA = {
     "rat": {
         "char": "r", "color": COLOR_ENTITY_WHITE,
-        "stats": {"hp": 5, "power": 2, "defense": 0, "speed": 1, "xp_reward": 5}
+        "stats": {"hp": 5, "power": 2, "defense": 0, "speed": 1, "xp_reward": 40} # Changed from 5
     },
     "ghoul": {
         "char": "g", "color": COLOR_CORPSE_PALE,
-        "stats": {"hp": 12, "power": 4, "defense": 1, "speed": 1, "xp_reward": 20}
+        "stats": {"hp": 12, "power": 4, "defense": 1, "speed": 1, "xp_reward": 80} # Changed from 20
     },
     "skeleton": {
         "char": "s", "color": COLOR_BONE_WHITE,
-        "stats": {"hp": 8, "power": 3, "defense": 2, "speed": 2, "xp_reward": 15}
+        "stats": {"hp": 8, "power": 3, "defense": 2, "speed": 2, "xp_reward": 100} # Changed from 15
     },
     "vampire_lord": {
         "char": "V", "color": COLOR_BLOOD_RED,
@@ -275,11 +275,11 @@ ITEM_DATA = {
 # --- Spawn Rate Definitions ---
 # Defines the base number and per-level scaling factor for entity spawns.
 SPAWN_RATES = {
-    "rat":      {"base": 10, "scaling": 2},
-    "ghoul":    {"base": 3,  "scaling": 1},
-    "skeleton": {"base": 4,  "scaling": 0.5},
-    "potion":   {"base": 5,  "scaling": -0.5, "min": 1},
-    "scroll":   {"base": 2,  "scaling": 0},
+    "rat":      {"base": 5,  "scaling": 1},      # Changed from base:10, scaling:2
+    "ghoul":    {"base": 2,  "scaling": 0.8},    # Changed from base:3, scaling:1
+    "skeleton": {"base": 1,  "scaling": 0.6},    # Changed from base:4, scaling:0.5
+    "potion":   {"base": 4,  "scaling": -0.5, "min": 1},
+    "scroll":   {"base": 0,  "scaling": 0.5},
     "dagger":   {"base": 1,  "scaling": 0},
     "armor":    {"base": 1,  "scaling": 0}
 }
@@ -897,7 +897,7 @@ class ExperienceComponent(Component):
     - Function: Holds all data required for the leveling system.
     - Effect: Enables a core RPG mechanic where the player becomes stronger over time.
     """
-    def __init__(self, base_xp=100, level_factor=1.5):
+    def __init__(self, base_xp=100, level_factor=1.3):
         super().__init__()
         self.level = 1
         self.current_xp = 0
@@ -1241,7 +1241,7 @@ class DungeonManager:
             if not rates:
                 continue  # Skip if no spawn rate is defined for this name
 
-            count = int(rates["base"] + (self.dungeon_level * rates["scaling"]))
+            count = math.ceil(rates["base"] + (self.dungeon_level * rates["scaling"]))
 
             # Enforce a minimum count if specified (e.g., for potions)
             min_count = rates.get("min", 0)
@@ -2034,9 +2034,11 @@ class Game:
                 if pos and render:
                     entity_rect = pygame.Rect(pos.x * TILE_SIZE, pos.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
                     visible_rect = self.camera.apply(entity_rect)
-                    text_surface = self.game_font.render(render.char, True, render.color)
-                    text_draw_rect = text_surface.get_rect(center=visible_rect.center)
-                    self.internal_surface.blit(text_surface, text_draw_rect)
+                    # This check ensures we only render entities that are actually on screen.
+                    if self.internal_surface.get_rect().colliderect(visible_rect):
+                        text_surface = self.game_font.render(render.char, True, render.color)
+                        text_draw_rect = text_surface.get_rect(center=visible_rect.center)
+                        self.internal_surface.blit(text_surface, text_draw_rect)
 
             self.hud.draw(self.internal_surface, self.player, self.dungeon_manager)
 
