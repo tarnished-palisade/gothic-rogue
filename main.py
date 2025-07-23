@@ -106,7 +106,7 @@ def teleport(**kwargs):
             return  # Exit the function after successfully teleporting.
 
 # ==============================================================================
-# III. Configuration and Constants (Principle: Change-Resilient)
+# III. Configuration and Constants (Principle: Adaptable)
 # ==============================================================================
 
 # --- Display Settings ---
@@ -1447,6 +1447,7 @@ class TurnManager:
 class Game:
     """The main class that orchestrates the entire game."""
 
+    # noinspection SpellCheckingInspection
     def __init__(self):
         # Initialize all Pygame modules.
         pygame.init()

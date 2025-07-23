@@ -83,13 +83,27 @@ def test_vampire_regeneration():
 
 
 # Test 5: Procedural Spawn Rate Scaling
-def test_spawn_scaling():
-    # Calculate expected rat spawns for level 1 and level 5
-    level_1_rats = int(SPAWN_RATES["rat"]["base"] + (1 * SPAWN_RATES["rat"]["scaling"]))
-    level_5_rats = int(SPAWN_RATES["rat"]["base"] + (5 * SPAWN_RATES["rat"]["scaling"]))
+# In test_gothic_rogue.py
 
-    assert level_1_rats == 12
-    assert level_5_rats == 20
+def test_spawn_scaling():
+    """Calculates expected spawns for Level 1 and 5 and verifies scaling."""
+    # --- New values based on Session 18 balancing ---
+    # Level 1: math.ceil(5 + (1 * 1)) = 6
+    # Level 5: math.ceil(5 + (5 * 1)) = 10
+
+    # Import the data and math function from the main script
+    from main import SPAWN_RATES
+    import math
+
+    # Calculate expected values using the exact same logic as the game
+    level_1_rats = math.ceil(SPAWN_RATES["rat"]["base"] + (1 * SPAWN_RATES["rat"]["scaling"]))
+    level_5_rats = math.ceil(SPAWN_RATES["rat"]["base"] + (5 * SPAWN_RATES["rat"]["scaling"]))
+
+    # Assert the new, correct values
+    assert level_1_rats == 6
+    assert level_5_rats == 10
+
+    # The core principle of scaling should still hold true
     assert level_5_rats > level_1_rats
     print("✓ Test Passed: Spawn scaling correctly increases difficulty.")
 
