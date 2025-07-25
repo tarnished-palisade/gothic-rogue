@@ -1,5 +1,5 @@
 # main.py
-# The foundational script for the Untitled Gothic Horror Roguelike.
+# The foundational script for the Gothic Horror Roguelike.
 
 import random
 import pygame
@@ -10,18 +10,46 @@ import os
 import math
 from typing import Dict, Any, Callable
 from datetime import datetime
+from pathlib import Path
+import platformdirs
+
+# ==============================================================================
+# Define App-Specific Paths
+# ==============================================================================
+
+APP_NAME = "GothicRogue"
+APP_AUTHOR = "MichaelBanovac" # Replace with your name or studio name
+
+# This finds the correct user data directory based on the OS
+# e.g., AppData\Roaming on Windows, ~/.config on Linux
+user_data_dir = Path(platformdirs.user_data_path(appname=APP_NAME, appauthor=APP_AUTHOR))
+
+# Ensure the directory exists before we try to write to it
+user_data_dir.mkdir(parents=True, exist_ok=True)
 
 # ==============================================================================
 # I. Settings Manager (Principle: Preservation Axiom)
 # ==============================================================================
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        # noinspection PyUnresolvedReferences,PyProtectedMember
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 class SettingsManager:
     """Manages loading and saving game settings to a JSON file."""
 
     # Add 'resolutions_list' as an argument
     def __init__(self, resolutions_list):
-        self.resolutions = resolutions_list  # Store the list internally
-        self.filepath = "gothic_rogue_settings.json"
+        self.resolutions = resolutions_list # Store the list internally
+        # Build the full, correct path to the settings file
+        self.filepath = user_data_dir / "gothic_rogue_settings.json"
         self.settings = self.load_settings()
 
     def load_settings(self):
@@ -177,6 +205,7 @@ LEVEL_UP_FACTOR = 1.5  # The scaling exponent for leveling.
 # The name of the monospaced font to be used for all game text.
 # 'Consolas' is chosen for its clarity and classic roguelike feel.
 FONT_NAME = 'Consolas'
+FONT_PATH = resource_path('assets/Consolas.ttf') # Location of Consolas .ttf file
 
 # The pixel dimension of a single map tile. This value is crucial for
 # converting grid-based coordinates (e.g., x=5, y=3) into pixel-based
@@ -332,8 +361,8 @@ class Menu:
     """Manages the main menu, its title, and its buttons."""
 
     def __init__(self):
-        self.title_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 50)
-        self.button_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 30)
+        self.title_font = pygame.font.Font(FONT_PATH, 50)
+        self.button_font = pygame.font.Font(FONT_PATH, 30)
 
         self.buttons = [
             Button(MENU_BUTTON_START_Y, "Start Game", self.button_font, GameState.PLAYER_TURN),
@@ -388,8 +417,8 @@ class OptionsMenu:
     """
 
     def __init__(self):
-        self.title_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 40)
-        self.button_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 28)
+        self.title_font = pygame.font.Font(FONT_PATH, 40)
+        self.button_font = pygame.font.Font(FONT_PATH, 28)
         self.buttons = []
         self.selected_index = 0
 
@@ -1472,8 +1501,8 @@ class Game:
         self.options_menu.game = self
 
         # --- Font Initialization ---
-        self.game_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 16)
-        self.death_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 60)
+        self.game_font = pygame.font.Font(FONT_PATH, 16)
+        self.death_font = pygame.font.Font(FONT_PATH, 60)
 
         # --- System Initialization ---
         self.camera = Camera(INTERNAL_WIDTH, INTERNAL_HEIGHT)
@@ -2332,7 +2361,8 @@ class FPSCounter:
 
 class GameLogger:
     """Simple logging system for tracking game events and errors."""
-    LOG_FILE = "gothic_rogue_log.txt"
+    # Build the full, correct path to the log file
+    LOG_FILE = user_data_dir / "gothic_rogue_log.txt"
 
     @staticmethod
     def log(message, level="INFO"):
