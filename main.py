@@ -33,6 +33,7 @@ user_data_dir.mkdir(parents=True, exist_ok=True)
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
+    # noinspection SpellCheckingInspection
     try:
         # PyInstaller creates a temp folder and stores path in _MEIPASS
         # noinspection PyUnresolvedReferences,PyProtectedMember
@@ -494,15 +495,16 @@ class OptionsMenu:
             button.draw(surface)
 
 class EquipmentMenu:
+    # noinspection SpellCheckingInspection
     """
-    Manages the UI for viewing and equipping items.
-    - Necessity: To provide the player with a dedicated interface for managing
-                 their character's gear, a core RPG activity.
-    - Function: Displays current stats, equipped items, and equippable items
-                in the inventory, and handles the logic of equipping an item.
-    - Effect: A functional, interactive menu that allows players to make
-              strategic decisions about their loadout.
-    """
+        Manages the UI for viewing and equipping items.
+        - Necessity: To provide the player with a dedicated interface for managing
+                     their character's gear, a core RPG activity.
+        - Function: Displays current stats, equipped items, and equippable items
+                    in the inventory, and handles the logic of equipping an item.
+        - Effect: A functional, interactive menu that allows players to make
+                  strategic decisions about their loadout.
+        """
 
     def __init__(self):
         self.title_font = pygame.font.Font(pygame.font.match_font(FONT_NAME), 32)
@@ -515,6 +517,7 @@ class EquipmentMenu:
         """Clears and rebuilds the list of selectable items from the player's inventory."""
         self.options.clear()
         inventory = player.get_component(InventoryComponent)
+        # noinspection SpellCheckingInspection
         if inventory:
             # Filter the inventory to only include items that have an EquippableComponent.
             self.options = [item for item in inventory.items if item.get_component(EquippableComponent)]
@@ -540,6 +543,7 @@ class EquipmentMenu:
                 return {"type": "close"}
         return None
 
+    # noinspection SpellCheckingInspection
     def draw(self, surface, player):
         """Draws all elements of the equipment menu."""
         # --- Draw Background Panel ---
@@ -953,15 +957,18 @@ class EquipmentComponent(Component):
             "armor": None
         }
 
+
+# noinspection SpellCheckingInspection
 class EquippableComponent(Component):
+    # noinspection SpellCheckingInspection
     """
-    Marks an item as equippable and defines its properties.
-    - Necessity: To distinguish equippable gear from other items like potions
-                 and to define the specific bonuses that gear provides.
-    - Function: Stores the item's target slot and its stat bonuses.
-    - Effect: Allows any item entity to be turned into a piece of gear with
-              defined characteristics, forming the basis of the loot system.
-    """
+        Marks an item as equippable and defines its properties.
+        - Necessity: To distinguish equippable gear from other items like potions
+                     and to define the specific bonuses that gear provides.
+        - Function: Stores the item's target slot and its stat bonuses.
+        - Effect: Allows any item entity to be turned into a piece of gear with
+                  defined characteristics, forming the basis of the loot system.
+        """
     def __init__(self, slot, power_bonus=0, defense_bonus=0, max_hp_bonus=0):
         super().__init__()
         self.slot = slot
@@ -1024,6 +1031,7 @@ class Entity:
         if equipment:
             for item in equipment.slots.values():
                 if item:
+                    # noinspection SpellCheckingInspection
                     equippable = item.get_component(EquippableComponent)
                     if equippable:
                         base_hp += equippable.max_hp_bonus
@@ -1037,6 +1045,7 @@ class Entity:
         if equipment:
             for item in equipment.slots.values():
                 if item:
+                    # noinspection SpellCheckingInspection
                     equippable = item.get_component(EquippableComponent)
                     if equippable:
                         base_power += equippable.power_bonus
@@ -1050,6 +1059,7 @@ class Entity:
         if equipment:
             for item in equipment.slots.values():
                 if item:
+                    # noinspection SpellCheckingInspection
                     equippable = item.get_component(EquippableComponent)
                     if equippable:
                         base_defense += equippable.defense_bonus
@@ -1473,6 +1483,7 @@ class TurnManager:
 # IX. Main Game Class
 # ==============================================================================
 
+# noinspection SpellCheckingInspection
 class Game:
     """The main class that orchestrates the entire game."""
 
@@ -1733,6 +1744,7 @@ class Game:
         """Handles the logic of equipping an item from inventory."""
         inventory = self.player.get_component(InventoryComponent)
         equipment = self.player.get_component(EquipmentComponent)
+        # noinspection SpellCheckingInspection
         equippable = item_to_equip.get_component(EquippableComponent)
 
         if not all([inventory, equipment, equippable]):

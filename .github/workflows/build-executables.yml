@@ -1,0 +1,66 @@
+name: Build Game Executables
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            asset_name_prefix: gothic-rogue-linux
+            pyinstaller_separator: ":"
+          - os: macos-latest
+            asset_name_prefix: gothic-rogue-mac
+            pyinstaller_separator: ":"
+          - os: windows-latest
+            asset_name_prefix: gothic-rogue-win
+            pyinstaller_separator: ";"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+
+    - name: Install System Dependencies (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential python3.13-dev libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev binutils
+
+    - name: Install System Dependencies (macOS)
+      if: matrix.os == 'macos-latest'
+      run: brew install sdl2 sdl2_image sdl2_mixer sdl2_ttf
+
+    - name: Install Python packages
+      run: python -m pip install --upgrade pip pygame==2.6.1 platformdirs==4.3.8 pyinstaller==6.14.2
+
+    - name: Build with PyInstaller
+      run: pyinstaller --onefile --add-data "assets${{ matrix.pyinstaller_separator }}assets" --name gothic-rogue main.py
+
+    - name: Package artifacts
+      shell: bash
+      run: |
+        if [ "${{ matrix.os }}" == "windows-latest" ]; then
+          7z a -tzip ${{ matrix.asset_name_prefix }}.zip ./dist/gothic-rogue.exe
+        elif [ "${{ matrix.os }}" == "macos-latest" ]; then
+          7z a -tzip ${{ matrix.asset_name_prefix }}.zip ./dist/gothic-rogue.app
+        else
+          mv ./dist/gothic-rogue ./${{ matrix.asset_name_prefix }}
+        fi
+
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.asset_name_prefix }}
+        path: ${{ matrix.asset_name_prefix }}*
