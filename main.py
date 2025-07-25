@@ -957,7 +957,6 @@ class EquipmentComponent(Component):
             "armor": None
         }
 
-
 # noinspection SpellCheckingInspection
 class EquippableComponent(Component):
     # noinspection SpellCheckingInspection
