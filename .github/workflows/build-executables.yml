@@ -15,13 +15,10 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         include:
           - os: ubuntu-latest
-            asset_name_prefix: gothic-rogue-linux
             pyinstaller_separator: ":"
           - os: macos-latest
-            asset_name_prefix: gothic-rogue-mac
             pyinstaller_separator: ":"
           - os: windows-latest
-            asset_name_prefix: gothic-rogue-win
             pyinstaller_separator: ";"
 
     steps:
@@ -31,9 +28,8 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.13' # This is fine, as setup-python handles it correctly
+        python-version: '3.13'
 
-    # FIX 1: Corrected the Python development package name for Linux
     - name: Install System Dependencies (Linux)
       if: matrix.os == 'ubuntu-latest'
       run: |
@@ -43,30 +39,32 @@ jobs:
     - name: Install System Dependencies (macOS)
       if: matrix.os == 'macos-latest'
       run: brew install sdl2 sdl2_image sdl2_mixer sdl2_ttf
+      
+    # FIX: Explicitly install the latest setuptools to avoid distutils error
+    - name: Install/Upgrade Setuptools
+      run: python -m pip install --upgrade pip setuptools
 
     - name: Install Python packages
-      run: python -m pip install --upgrade pip pygame==2.6.0 platformdirs==4.2.2 pyinstaller==6.9.0
+      run: python -m pip install pygame==2.6.0 platformdirs==4.2.2 pyinstaller==6.9.0
 
     - name: Build with PyInstaller
       run: pyinstaller --onefile --add-data "assets${{ matrix.pyinstaller_separator }}assets" --name gothic-rogue main.py
 
-    # FIX 2: Corrected the macOS packaging step
-    - name: Package artifacts
+    # FIX: Simplified the artifact staging logic for robustness
+    - name: Stage Artifact
       shell: bash
       run: |
-        # Create a build directory to place all artifacts into
         mkdir build
-        
-        # Windows creates a .exe file
         if [ "${{ matrix.os }}" == "windows-latest" ]; then
-          mv ./dist/gothic-rogue.exe ./build/${{ matrix.asset_name_prefix }}
-        # macOS and Linux create a single executable file
+          mv ./dist/gothic-rogue.exe ./build/
         else
-          mv ./dist/gothic-rogue ./build/${{ matrix.asset_name_prefix }}
+          mv ./dist/gothic-rogue ./build/
         fi
 
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.asset_name_prefix }}
+        # The name of the artifact will be e.g., "gothic-rogue-linux"
+        name: gothic-rogue-${{ matrix.os }} 
         path: ./build/*
+
