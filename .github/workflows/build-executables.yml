@@ -10,7 +10,7 @@ jobs:
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false # Allows all jobs to run even if one fails
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         include:
@@ -25,10 +25,11 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    # FIX 1: Changed to a more stable Python version with full package support.
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.13'
+        python-version: '3.11'
 
     - name: Install System Dependencies (Linux)
       if: matrix.os == 'ubuntu-latest'
@@ -40,17 +41,16 @@ jobs:
       if: matrix.os == 'macos-latest'
       run: brew install sdl2 sdl2_image sdl2_mixer sdl2_ttf
       
-    # FIX: Explicitly install the latest setuptools to avoid distutils error
     - name: Install/Upgrade Setuptools
       run: python -m pip install --upgrade pip setuptools
 
+    # FIX 2: Corrected pyinstaller version to an existing one.
     - name: Install Python packages
-      run: python -m pip install pygame==2.6.0 platformdirs==4.2.2 pyinstaller==6.9.0
+      run: python -m pip install pygame==2.6.0 platformdirs==4.2.2 pyinstaller==6.8.0
 
     - name: Build with PyInstaller
       run: pyinstaller --onefile --add-data "assets${{ matrix.pyinstaller_separator }}assets" --name gothic-rogue main.py
 
-    # FIX: Simplified the artifact staging logic for robustness
     - name: Stage Artifact
       shell: bash
       run: |
@@ -64,7 +64,6 @@ jobs:
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        # The name of the artifact will be e.g., "gothic-rogue-linux"
         name: gothic-rogue-${{ matrix.os }} 
         path: ./build/*
 
