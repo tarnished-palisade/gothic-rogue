@@ -3,7 +3,7 @@
 bd7cd7d114cb68e0b6601ac86a9ab966fcbd74d1a2528183a006b5a9d8c83c21  ./test_gothic_rogue.py
 5f8d58e719a7d724be036145f506acf38b0942e253a7c331887c7056b93deac8  ./assets/Consolas.ttf
 6eb6dbfe35298dd2e44d0e0e155cb42911e2b7f7703e8b89f0acb5cee201854e  ./gothic-rogue.spec
-718cae6f83d500beda4e266019373dda301a3135736a4d75cc39831eae417bb0  ./.github/workflows/build-executables.yml
+7d5892d40f1385f32cf066886d4958b99df2a9037ed0cd65ad67d2c96ea0b1fc  ./.github/workflows/build-executables.yml
 3a18dc884aa9fa7ea544798b9d2bb234ab99b352e80f62c54fad13e7986d212f  ./ai_collaboration.md
 d71ff0615ab75d77afe4068c6fde779726cbeac6676f7c7a85931012b337d38e  ./code_doctrine.md
 c29941103d1f326b04a45cc1da87ef397187f8975a0e56d373d4223ba8c59543  ./LICENSE
