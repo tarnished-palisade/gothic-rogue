@@ -34,7 +34,8 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential python3-dev libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev
+        # Add upx-ucl to install the executable compressor
+        sudo apt-get install -y build-essential python3-dev libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev upx-ucl
 
     - name: Install System Dependencies (macOS)
       if: matrix.os == 'macos-latest'
@@ -47,9 +48,14 @@ jobs:
       run: python -m pip install pygame==2.6.0 platformdirs==4.2.2 pyinstaller==6.8.0
 
     - name: Build with PyInstaller
-      run: pyinstaller --onefile --add-data "assets${{ matrix.pyinstaller_separator }}assets" --name gothic-rogue main.py
+      # Add the --upx flag only for the Linux build where UPX is installed
+      run: |
+        if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
+          pyinstaller --onefile --upx --add-data "assets${{ matrix.pyinstaller_separator }}assets" --name gothic-rogue main.py
+        else
+          pyinstaller --onefile --add-data "assets${{ matrix.pyinstaller_separator }}assets" --name gothic-rogue main.py
+        fi
 
-    # FIX: Changed staging directory name to 'release' to avoid conflict with PyInstaller's 'build' directory.
     - name: Stage Artifact
       shell: bash
       run: |
